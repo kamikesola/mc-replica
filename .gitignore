@@ -1,0 +1,9 @@
+node_modules
+dist
+tools/parity/out
+*.log
+.DS_Store
+
+# 从你自己的客户端 jar 里解出来的原版数据（Mojang 版权，不要提交）
+datapacks/*
+!datapacks/README.md

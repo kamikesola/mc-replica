@@ -1,0 +1,27 @@
+{
+  "name": "mc-replica",
+  "version": "0.0.0",
+  "private": true,
+  "description": "用 TypeScript + three.js 逐版复刻 Minecraft Java 版 1.21.1 —— v0：随机数、噪声与 JSON 密度函数",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "build:public": "tsc --noEmit && vite build --mode public",
+    "preview": "vite preview",
+    "test": "tsx --test tests/parity.test.ts tests/density.test.ts tests/vanilla.test.ts tests/game.test.ts",
+    "typecheck": "tsc --noEmit",
+    "parity": "javac -d tools/parity/out tools/parity/Parity.java && java -cp tools/parity/out Parity > tests/fixtures/parity.json"
+  },
+  "dependencies": {
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/three": "^0.170.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0"
+  }
+}

@@ -74,6 +74,8 @@ export default class UI {
     })
 
     distance.addEventListener('change', () => this.setDistance(Number(distance.value)))
+    const bobbing = $<HTMLInputElement>('bobbing')
+    bobbing.addEventListener('change', () => (this.control.bobbing = bobbing.checked))
     if (q.get('distance')) {
       distance.value = q.get('distance')!
       this.setDistance(Number(distance.value))

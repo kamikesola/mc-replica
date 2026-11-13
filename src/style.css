@@ -112,6 +112,12 @@ canvas {
 #menu details label select {
   width: 62%;
 }
+#menu details label.check {
+  justify-content: flex-start;
+}
+#menu details label.check input {
+  width: auto;
+}
 #regenerate {
   margin-top: 10px;
   width: 100%;

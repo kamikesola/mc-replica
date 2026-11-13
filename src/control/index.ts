@@ -1,23 +1,32 @@
 import * as THREE from 'three'
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js'
-import Player, { Mode } from '../player'
+import Player, { PHYSICS } from '../player'
 import type Terrain from '../terrain'
-import { BLOCKS, BlockType, HOTBAR } from '../terrain/blocks'
-import { collides, moveAndCollide, type Vec3 } from './physics'
+import { BLOCKS, BlockType, HOTBAR, isSolid } from '../terrain/blocks'
+import { tickPlayer, type MoveInput, type MoveWorld } from './movement'
+import { collides, EMPTY, FULL_CUBE, type Vec3 } from './physics'
 import { raycast, type RayHit } from './raycast'
 
-/** 水的阻力：原版每 tick 速度 ×0.8，换算成连续形式的衰减系数（每秒） */
-const WATER_DRAG = -Math.log(0.8) / 0.05
+/** 原版默认视野 70°（竖直方向） */
+const BASE_FOV = 70
 
 /**
  * Control：键盘鼠标输入 → 玩家移动、挖方块、放方块（对应原项目的 Control 类）。
  *
  * 按键：
- *   WASD 移动 · 空格 跳 / 飞行上升 · Shift 潜行 / 飞行下降
+ *   WASD 移动 · 空格 跳 / 游泳上浮 / 飞行上升 · Shift 潜行 / 飞行下降
  *   双击 W 或按住 R 疾跑 · 双击空格或按 F 切换飞行
- *   左键 挖 · 右键 放 · 数字键 / 滚轮 选方块 · F3 调试信息 · M 噪声图
+ *   左键 挖 · 右键 放 · 数字键 / 滚轮 选方块
  *
- * 位置约定：feet 是玩家脚底中心（碰撞箱底面中心），相机放在 feet + 眼高。
+ * v2：物理改成和原版一样的固定步长——每秒 20 个 tick，每个 tick 跑一遍 movement.ts。
+ * 屏幕每秒刷新 60 次甚至更多，两个 tick 之间的画面用插值补出来：
+ *
+ *   帧时间累加到 acc 里，满 0.05 秒就跑一个 tick
+ *   画面位置 = lerp(上一个 tick 的位置, 这个 tick 的位置, acc / 0.05)
+ *
+ * 这样物理结果和帧率无关（30 帧和 144 帧跳得一样高），画面也不会一顿一顿的。
+ *
+ * 位置约定：player.pos 是脚底中心，相机在脚底 + 眼高。
  */
 export default class Control {
   scene: THREE.Scene
@@ -25,34 +34,75 @@ export default class Control {
   player: Player
   terrain: Terrain
   control: PointerLockControls
+  /**
+   * 鼠标转动的是这个“头”，不是相机本身。相机每帧从头复制朝向，再叠加视角摇晃。
+   * 如果直接转相机，摇晃造成的倾斜会被鼠标控制器当成玩家自己转的，越积越歪。
+   */
+  head = new THREE.Object3D()
 
-  /** 玩家脚底位置 */
-  feet: Vec3 = { x: 0.5, y: 120, z: 0.5 }
   /** 出生点找好之前不移动（区块还没加载完） */
   spawned = false
-  /** 上一帧水平方向是否撞到了方块（水里爬岸用） */
-  private hitWall = false
-  /** 游泳状态：碰到水进入，回到陆地才退出（决定水平速度） */
-  private swimming = false
   /** 当前选中的物品栏格子 0..8 */
   slot = 0
   /** 准星对准的方块 */
   target: RayHit | null = null
   /** 最远能够到 5 格（原版生存模式 4.5，这里放宽一点） */
   reach = 5
+  /** 视角摇晃（原版“视角摇晃”选项，默认开） */
+  bobbing = true
+
+  /** 还没跑掉的时间（秒），满 1 tick 就跑一次 */
+  private acc = 0
+  /** 眼高：切换站 / 蹲时每 tick 走一半，看起来是平滑蹲下（原版 Camera.tick） */
+  private eye = 1.62
+  private prevEye = 1.62
+  /** 视野倍数：疾跑 1.15、飞行 1.1，每 tick 走一半（原版 GameRenderer.tickFov） */
+  private fovMod = 1
+  private prevFovMod = 1
 
   private keys = new Set<string>()
   private lastTap: Record<string, number> = {}
   private sprintByDoubleTap = false
+  private world: MoveWorld
 
   constructor(scene: THREE.Scene, camera: THREE.PerspectiveCamera, player: Player, terrain: Terrain) {
     this.scene = scene
     this.camera = camera
     this.player = player
     this.terrain = terrain
-    this.control = new PointerLockControls(camera, document.body)
+    this.head.rotation.order = 'YXZ'
+    this.control = new PointerLockControls(this.head as unknown as THREE.Camera, document.body)
+    this.world = {
+      // 没加载的区块当作实心，防止掉进还没生成的地方
+      shape: (x, y, z) => {
+        const b = terrain.getBlock(x, y, z)
+        return b === null || isSolid(b) ? FULL_CUBE : EMPTY
+      },
+      isWater: (x, y, z) => terrain.getBlock(x, y, z) === BlockType.water
+    }
     this.initKeyboard()
     this.initMouse()
+  }
+
+  /** 玩家脚底位置（F3、噪声图用） */
+  get feet(): Vec3 {
+    return this.player.pos
+  }
+
+  set feet(v: Vec3) {
+    this.teleport(v.x, v.y, v.z)
+  }
+
+  /** 瞬移（调试、出生用）：位置、上一 tick 位置一起改，速度清零 */
+  teleport(x: number, y: number, z: number): void {
+    this.player.pos = { x, y, z }
+    this.player.prevPos = { x, y, z }
+    this.player.velocity = { x: 0, y: 0, z: 0 }
+  }
+
+  /** 朝向（绕 y 轴的角度，弧度） */
+  get yaw(): number {
+    return new THREE.Euler().setFromQuaternion(this.head.quaternion, 'YXZ').y
   }
 
   // ---------------------------------------------------------------- 输入
@@ -64,7 +114,8 @@ export default class Control {
       if (e.repeat) return
       this.keys.add(e.code)
       const now = performance.now()
-      const doubleTap = now - (this.lastTap[e.code] ?? 0) < 300
+      // 原版双击判定是 7 tick = 0.35 秒
+      const doubleTap = now - (this.lastTap[e.code] ?? 0) < 350
       this.lastTap[e.code] = now
 
       if (e.code === 'KeyW' && doubleTap) this.sprintByDoubleTap = true
@@ -101,8 +152,22 @@ export default class Control {
   }
 
   toggleFly = () => {
-    this.player.setMode(this.player.flying ? Mode.walking : Mode.flying)
+    this.player.flying = !this.player.flying
     this.player.velocity.y = 0
+  }
+
+  /** 这一 tick 的输入 */
+  private readInput(): MoveInput {
+    const k = this.keys
+    const axis = (a: string, b: string) => (k.has(a) ? 1 : 0) - (k.has(b) ? 1 : 0)
+    return {
+      forward: axis('KeyW', 'KeyS'),
+      left: axis('KeyA', 'KeyD'),
+      jump: k.has('Space'),
+      sneak: k.has('ShiftLeft') || k.has('ShiftRight'),
+      sprint: k.has('KeyR') || this.sprintByDoubleTap,
+      yaw: this.yaw
+    }
   }
 
   // ---------------------------------------------------------------- 挖 / 放
@@ -122,8 +187,8 @@ export default class Control {
     const here = this.terrain.getBlock(x, y, z)
     if (here !== BlockType.air && here !== BlockType.water) return
     // 不能把方块放进自己身体里
-    const body = { half: this.player.body.width / 2, height: this.player.body.height }
-    if (collides(this.feet, body, (bx, by, bz) => bx === x && by === y && bz === z)) return
+    const b = this.player.body
+    if (collides(this.player.pos, b.width, b.height, (bx, by, bz) => (bx === x && by === y && bz === z ? FULL_CUBE : EMPTY))) return
     this.terrain.setBlock(x, y, z, HOTBAR[this.slot])
   }
 
@@ -144,13 +209,13 @@ export default class Control {
         const top = this.terrain.topSolidY(x, z)
         if (top === null) return false // 还没加载
         if (top >= info.seaLevel) {
-          this.feet = { x: x + 0.5, y: top + 1, z: z + 0.5 }
+          this.teleport(x + 0.5, top + 1, z + 0.5)
           return true
         }
       }
     }
-    this.feet = { x: 0.5, y: info.seaLevel + 10, z: 0.5 }
-    this.player.setMode(Mode.flying)
+    this.teleport(0.5, info.seaLevel + 10, 0.5)
+    this.player.flying = true
     return true
   }
 
@@ -159,123 +224,73 @@ export default class Control {
   update = (dt: number) => {
     if (!this.spawned) {
       this.spawned = this.trySpawn()
-      this.syncCamera()
+      this.render(1)
       return
     }
-    dt = Math.min(dt, 0.05) // 卡顿时不要一下飞出去太远
-    this.updateMode()
-    this.updateVelocity(dt)
-
-    const p = this.player
-    const body = { half: p.body.width / 2, height: p.body.height }
-    const { onGround, hitWall } = moveAndCollide(this.feet, p.velocity, dt, body, this.terrain.isSolidAt.bind(this.terrain))
-    p.onGround = onGround
-    this.hitWall = hitWall
-    if (onGround && p.flying) p.setMode(Mode.walking) // 飞行时落地自动取消飞行（同原版）
-
-    this.syncCamera()
+    // 卡顿太久（切到别的标签页再回来）就不补了，最多补 5 个 tick
+    this.acc = Math.min(this.acc + dt, PHYSICS.TICK * 5)
+    while (this.acc >= PHYSICS.TICK) {
+      this.acc -= PHYSICS.TICK
+      this.tick()
+    }
+    this.render(this.acc / PHYSICS.TICK)
     this.updateTarget()
   }
 
-  /** 根据按键决定走 / 跑 / 潜行 / 飞 */
-  private updateMode() {
+  /** 一个 tick：物理 + 镜头的平滑量 */
+  private tick() {
     const p = this.player
-    const sprint = this.keys.has('KeyR') || this.sprintByDoubleTap
-    if (p.flying) p.setMode(sprint ? Mode.sprintFlying : Mode.flying)
-    else if (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight')) p.setMode(Mode.sneaking)
-    else p.setMode(sprint && this.keys.has('KeyW') ? Mode.sprinting : Mode.walking)
+    tickPlayer(p, this.readInput(), this.world)
+    if (!p.sprinting) this.sprintByDoubleTap = false // 撞墙停下后，要重新双击才能再跑
+
+    this.prevEye = this.eye
+    this.eye += (p.body.eye - this.eye) * 0.5
+
+    // 视野：飞行 ×1.1；移动速度属性 / 0.1 → (h + 1) / 2，疾跑时 (1.3 + 1) / 2 = 1.15
+    let fov = p.flying ? 1.1 : 1
+    fov *= (p.speedAttribute / PHYSICS.WALK_SPEED + 1) / 2
+    this.prevFovMod = this.fovMod
+    this.fovMod += (fov - this.fovMod) * 0.5
   }
 
-  /**
-   * 脚底泡在水里多深（格）：0 表示没碰到水。
-   * 水面高度和画出来的一样：上面不是水的水块，水面在 14/16 处（见 mesh/mesher.ts）。
-   */
-  private get waterDepth(): number {
-    const { x, y, z } = this.feet
-    const bx = Math.floor(x)
-    const bz = Math.floor(z)
-    let top = -Infinity
-    // 从脚所在的格子往上找，找到连续的水柱顶
-    for (let by = Math.floor(y); by <= Math.floor(y + this.player.body.height); by++) {
-      if (this.terrain.getBlock(bx, by, bz) !== BlockType.water) break
-      top = this.terrain.getBlock(bx, by + 1, bz) === BlockType.water ? by + 1 : by + 0.875
-    }
-    return Math.max(0, top - y)
-  }
-
-  private updateVelocity(dt: number) {
+  /** 把插值后的位置、朝向、摇晃、视野放到相机上。t = 0..1，表示在两个 tick 之间的位置 */
+  private render(t: number) {
     const p = this.player
-    const v = p.velocity
-    const depth = p.flying ? 0 : this.waterDepth
-    const touchingWater = depth > 0
+    const lerp = (a: number, b: number) => a + (b - a) * t
+    const eye = lerp(this.prevEye, this.eye)
+    this.camera.position.set(lerp(p.prevPos.x, p.pos.x), lerp(p.prevPos.y, p.pos.y) + eye, lerp(p.prevPos.z, p.pos.z))
+    this.camera.quaternion.copy(this.head.quaternion)
 
-    // “游泳状态”：碰到水就进入，回到地面（且不在水里）才退出。
-    // 从水面跳出去的那一下也算游泳状态，所以水平速度不会突然变成陆地速度（原版也是这样：
-    // 出水的一瞬间人在空中，空中几乎不能加速，保持的是水里的速度）
-    if (touchingWater) this.swimming = true
-    else if (p.onGround || p.flying) this.swimming = false
-
-    // 水平方向：相机朝向投影到水平面上
-    const forward = new THREE.Vector3()
-    this.camera.getWorldDirection(forward)
-    forward.y = 0
-    forward.normalize()
-    const right = new THREE.Vector3().crossVectors(forward, this.camera.up).normalize()
-    const move = new THREE.Vector3()
-    if (this.keys.has('KeyW')) move.add(forward)
-    if (this.keys.has('KeyS')) move.sub(forward)
-    if (this.keys.has('KeyD')) move.add(right)
-    if (this.keys.has('KeyA')) move.sub(right)
-    if (move.lengthSq() > 0) move.normalize()
-    const speed = p.speed * (this.swimming ? 0.5 : 1)
-    v.x = move.x * speed
-    v.z = move.z * speed
-
-    // 竖直方向
-    const up = this.keys.has('Space')
-    const down = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight')
-    if (p.flying) {
-      v.y = up ? p.speed * 0.75 : down ? -p.speed * 0.75 : 0
-      return
+    // 视角摇晃（原版 GameRenderer.bobView）：随走过的距离左右晃、上下颠，幅度是 bob
+    if (this.bobbing) {
+      const g = p.walkDist - p.prevWalkDist
+      const h = -(p.walkDist + g * t) * Math.PI
+      const i = lerp(p.prevBob, p.bob)
+      const deg = Math.PI / 180
+      this.camera.rotateX(-Math.abs(Math.cos(h - 0.2) * i) * 5 * deg)
+      this.camera.rotateZ(-Math.sin(h) * i * 3 * deg)
+      this.camera.translateX(-Math.sin(h) * i * 0.5)
+      this.camera.translateY(Math.abs(Math.cos(h) * i))
     }
 
-    // 在浅水里站着（水没过脚踝不到 0.4 格）按空格：正常起跳，和陆地一样
-    const shallowJump = up && p.onGround && depth <= 0.4
-
-    if (touchingWater && !shallowJump) {
-      // 水里的竖直速度，按原版每 tick 的规则换算成每秒（原版 LivingEntity）：
-      //   每 tick：按住跳 y += 0.04；然后 y *= 0.8（水的阻力）；再 y -= 0.005（水里的重力）
-      //   稳定后：按住跳 = +0.135 格/tick = +2.7 格/秒；松开 = -0.025 格/tick = -0.5 格/秒（慢慢下沉）
-      // 这里用连续形式：速度以 e^(-k·t) 的速度靠近稳定值，k = -ln(0.8) / 0.05 秒
-      const target = up ? 2.7 : -0.5
-      v.y = target + (v.y - target) * Math.exp(-WATER_DRAG * dt)
-
-      // 游向一格高的岸边时往上蹿一下（原版 LivingEntity.travel）：
-      // 水里水平方向撞到方块，并且把人抬高 0.6 格之后前面是空的 → 竖直速度设为 0.3 格/tick = 6 格/秒。
-      // 抬高 0.6 格还撞墙（高墙、水下的峭壁）就不会触发，所以不会贴着墙一直往上爬
-      if (this.hitWall && move.lengthSq() > 0) {
-        const body = { half: p.body.width / 2, height: p.body.height }
-        const lifted = { x: this.feet.x + move.x * 0.3, y: this.feet.y + 0.6, z: this.feet.z + move.z * 0.3 }
-        if (!collides(lifted, body, this.terrain.isSolidAt.bind(this.terrain))) v.y = 6
-      }
-    } else {
-      // 陆地 / 空中（包括从水面跳出去的那一下）：正常重力。
-      // 原版在水面按住空格就是这样：在水里往上加速 → 冲出水面 → 重力拉回来 → 再进水，一上一下地“浮”着
-      v.y = Math.max(v.y - p.gravity * dt, -p.terminalVelocity)
-      if (up && p.onGround) v.y = Math.sqrt(2 * p.gravity * p.jumpHeight) // v² = 2gh
+    // 视野：疾跑时变宽；眼睛在水下时变窄（原版 ×6/7）
+    let fov = BASE_FOV * lerp(this.prevFovMod, this.fovMod)
+    if (p.underWater) fov *= 6 / 7
+    if (Math.abs(this.camera.fov - fov) > 1e-3) {
+      this.camera.fov = fov
+      this.camera.updateProjectionMatrix()
     }
   }
 
-  private syncCamera() {
-    const eye = this.player.mode === Mode.sneaking ? 1.27 : this.player.body.eye
-    this.camera.position.set(this.feet.x, this.feet.y + eye, this.feet.z)
-  }
-
+  /** 射线从眼睛出发（不带摇晃），方向是头的朝向 */
   private updateTarget() {
-    const dir = new THREE.Vector3()
-    this.camera.getWorldDirection(dir)
-    const o = this.camera.position
-    this.target = raycast(o.x, o.y, o.z, dir.x, dir.y, dir.z, this.reach, (x, y, z) => {
+    const p = this.player
+    const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(this.head.quaternion)
+    const t = this.acc / PHYSICS.TICK
+    const ox = p.prevPos.x + (p.pos.x - p.prevPos.x) * t
+    const oy = p.prevPos.y + (p.pos.y - p.prevPos.y) * t + this.prevEye + (this.eye - this.prevEye) * t
+    const oz = p.prevPos.z + (p.pos.z - p.prevPos.z) * t
+    this.target = raycast(ox, oy, oz, dir.x, dir.y, dir.z, this.reach, (x, y, z) => {
       const b = this.terrain.getBlock(x, y, z)
       return b !== null && b !== BlockType.air && b !== BlockType.water
     })
@@ -285,8 +300,7 @@ export default class Control {
 
   /** 面朝方向（F3 用），和原版一样用 东南西北 */
   get facing(): string {
-    const dir = new THREE.Vector3()
-    this.camera.getWorldDirection(dir)
+    const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(this.head.quaternion)
     if (Math.abs(dir.x) > Math.abs(dir.z)) return dir.x > 0 ? 'east (+X)' : 'west (-X)'
     return dir.z > 0 ? 'south (+Z)' : 'north (-Z)'
   }

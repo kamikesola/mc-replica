@@ -2,12 +2,13 @@
 
 用 TypeScript + three.js，一个版本一个 demo，逐步复刻 **Minecraft Java 版 1.21.1**。
 
-当前版本：**v1 · 区块存储与贪婪网格**。能走、能跑、能飞、能挖、能放方块；地形由原版数据包里的密度函数生成，随机数、噪声、密度函数都与原版逐位对齐。v1 起区块按原版的 section + 调色板存储，网格用贪婪合并，方块有了纹理。
+当前版本：**v2 · 原版物理与手感**。能走、能跑、能飞、能挖、能放方块；地形由原版数据包里的密度函数生成，随机数、噪声、密度函数都与原版逐位对齐。v1 起区块按原版的 section + 调色板存储，网格用贪婪合并，方块有了纹理；v2 起移动按原版每秒 20 tick 的公式计算，走、跑、跳、潜行、游泳的速度和高度都与原版一致。
 
 ![](docs/articles/images/v1/01-game.jpg)
 
 | 版本 | 文章 |
 | --- | --- |
+| v2 | [20 TPS 原版物理与手感](docs/articles/v2-原版物理与手感.md) |
 | v1 | [区块存储、贪婪网格与纹理](docs/articles/v1-区块存储与贪婪网格.md) |
 | v0 | [功能与实现：噪声层、AABB、方块高亮](docs/articles/v0-功能与实现.md) |
 
@@ -18,7 +19,7 @@
 ```bash
 npm install
 npm run dev            # 打开终端里给出的地址
-npm test               # 对拍测试 + 密度函数 + 原版数据（没放原版数据时自动跳过）+ 游戏逻辑 + 区块存储与网格
+npm test               # 对拍测试 + 密度函数 + 原版数据（没放原版数据时自动跳过）+ 游戏逻辑 + 区块存储与网格 + 移动物理
 npm run build          # 类型检查并打包到 dist/（会包含 datapacks/ 里的数据，只适合自己用）
 npm run build:public   # 公开部署用：不打包 datapacks/ 里的原版数据
 ```
@@ -48,8 +49,8 @@ datapacks/vanilla/data/minecraft/worldgen/noise/...     ← 标准数据包结�
 src/
   main.ts              入口：new Core / Player / Terrain / Control / UI，animate 循环
   core/                场景、相机、渲染器
-  player/              玩家参数：速度、碰撞箱、重力
-  control/             键鼠输入 → 移动、碰撞（physics.ts）、选方块（raycast.ts）、挖放
+  player/              玩家状态和原版物理常数
+  control/             键鼠输入、20 TPS 循环、镜头；移动（movement.ts）、碰撞（physics.ts）、选方块（raycast.ts）、挖放
   terrain/
     index.ts           Terrain：区块的加载 / 卸载 / 读写方块，按 section 建网格
     chunk/             区块存储：section + 调色板 + 位压缩（对应原版 PalettedContainer）
@@ -81,8 +82,8 @@ src/
 | 版本 | 主题 |
 | --- | --- |
 | v0 | 随机数、噪声、密度函数 → 原版地形，能走能挖 |
-| **v1** | 区块 section + 调色板存储、贪婪网格、方块纹理（本版） |
-| v2 | 20 TPS 固定步长、原版物理参数 |
+| v1 | 区块 section + 调色板存储、贪婪网格、方块纹理 |
+| **v2** | 20 TPS 固定步长、原版移动 / 碰撞 / 游泳公式、视角摇晃（本版） |
 | v3 | 含水层与流体 |
 | v4 | 生物群系、地表规则 |
 | v5 | 树、矿石等地物 |

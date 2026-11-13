@@ -1,9 +1,8 @@
 /**
- * 游戏部分里不依赖浏览器的逻辑：射线选方块、碰撞、区块生成。
+ * 游戏部分里不依赖浏览器的逻辑：射线选方块、区块生成。碰撞和移动见 movement.test.ts。
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { collides, moveAndCollide } from '../src/control/physics'
 import { raycast } from '../src/control/raycast'
 import { BlockType } from '../src/terrain/blocks'
 import Section from '../src/terrain/chunk/Section'
@@ -24,29 +23,6 @@ test('射线：斜着看，命中面的法线正确；够不着时返回 null', 
   assert.equal(hit?.x, 3)
   assert.equal(hit?.nx, -1)
   assert.equal(raycast(0.5, 0.5, 0.5, d, 0, d, 2, wall), null)
-})
-
-test('碰撞：从高处落下会停在地面上', () => {
-  const body = { half: 0.3, height: 1.8 }
-  const solid = (_x: number, y: number) => y < 64
-  const pos = { x: 0.5, y: 80, z: 0.5 }
-  const vel = { x: 0, y: -40, z: 0 }
-  let ground = false
-  for (let i = 0; i < 60 && !ground; i++) ground = moveAndCollide(pos, vel, 0.05, body, solid).onGround
-  assert.ok(ground)
-  assert.equal(pos.y, 64)
-  assert.ok(!collides(pos, body, solid))
-})
-
-test('碰撞：撞墙会停下但另一个方向可以继续滑动', () => {
-  const body = { half: 0.3, height: 1.8 }
-  const solid = (x: number, y: number) => y < 64 || x >= 5
-  const pos = { x: 4.5, y: 64, z: 0.5 }
-  const vel = { x: 4, y: 0, z: 4 }
-  const { hitWall } = moveAndCollide(pos, vel, 0.25, body, solid)
-  assert.ok(hitWall) // 水里爬岸靠这个标记
-  assert.ok(pos.x < 5 - 0.3 + 1e-3, `x = ${pos.x}`)
-  assert.ok(pos.z > 1.4, `z = ${pos.z}`)
 })
 
 test('区块生成：底部是基岩，地表有草或沙，海平面以下有水', () => {

@@ -1,4 +1,4 @@
-# 架构说明（v1）
+# 架构说明（v2）
 
 ## 整体：和原项目一样，一个模块一个类
 
@@ -14,7 +14,7 @@ terrain.init(seed, settings)                          // 让 Worker 换种子
 
 ;(function animate() {
   requestAnimationFrame(animate)
-  control.update(dt)   // 1. 按键 → 速度 → 碰撞 → 新位置；射线选方块
+  control.update(dt)   // 1. 累计时间，满 0.05 秒跑一个 tick（按键 → 原版移动公式 → 碰撞）；插值放相机；射线选方块
   terrain.update()     // 2. 按玩家位置加载 / 卸载区块
   ui.update()          // 3. 刷新 FPS、物品栏、F3、噪声图
   renderer.render(scene, camera)
@@ -73,9 +73,10 @@ Chunk（16×16×384）
 | 目录 | 文件 | 职责 |
 | --- | --- | --- |
 | `core/` | `index.ts` | 场景、相机、渲染器、雾 |
-| `player/` | `index.ts` | 移动模式、速度、碰撞箱、重力、跳跃高度（原版数值） |
-| `control/` | `index.ts` | 键鼠输入、移动模式切换、挖放方块、出生点 |
-| | `physics.ts` | AABB 分轴碰撞 |
+| `player/` | `index.ts` | 玩家状态（位置、上一 tick 位置、速度、姿势、水深……）、原版物理常数 `PHYSICS`、姿势表 `POSES` |
+| `control/` | `index.ts` | 键鼠输入、20 TPS 循环 + 插值、镜头（眼高、摇晃、视野）、挖放方块、出生点 |
+| | `movement.ts` | 一个 tick 的移动：原版的加速度、摩擦、跳跃、飞行、游泳、潜行、疾跑 |
+| | `physics.ts` | AABB 按轴裁剪碰撞、抬步、潜行防掉落 |
 | | `raycast.ts` | DDA 射线选方块 |
 | `terrain/` | `index.ts` | 区块加载 / 卸载、`getBlock` / `setBlock`、改动记录、主线程重建网格 |
 | | `chunk/Chunk.ts` | 一根区块柱：24 个 section + 每个 section 的网格 |
@@ -131,3 +132,4 @@ Chunk（16×16×384）
 | `tests/vanilla.test.ts` | 原版数据（没有就跳过） |
 | `tests/game.test.ts` | 射线、碰撞、区块生成 |
 | `tests/chunk.test.ts` | 位压缩、调色板、贪婪网格、纹理 |
+| `tests/movement.test.ts` | 移动速度、跳跃、飞行、潜行、抬步、碰撞、游泳，对照原版数值 |

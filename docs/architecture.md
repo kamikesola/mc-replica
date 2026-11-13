@@ -1,4 +1,4 @@
-# 架构说明（v0）
+# 架构说明（v1）
 
 ## 整体：和原项目一样，一个模块一个类
 
@@ -35,16 +35,38 @@ terrain.init(seed, settings)                          // 让 Worker 换种子
    │ 1. NoiseChunk 算 final_density       ← terrain/worldgen（v0 的核心成果）
    │    > 0 石头，≤ 0 空气
    │ 2. 临时地表规则：草 / 土 / 沙 / 水 / 深板岩 / 基岩
-   │ 3. buildChunkMesh() 面剔除 + AO       ← terrain/mesh/mesher.ts
+   │ 3. 每 16 层切一个 section：
+   │    PalettedContainer.fromValues()    ← terrain/chunk（调色板 + 位压缩）
+   │    meshSection() 贪婪网格             ← terrain/mesh/mesher.ts
    ▼
- { blocks, opaque, water }  （ArrayBuffer 直接转移，不复制）
+ { sections[24], meshes[24] }  （ArrayBuffer 直接转移，不复制）
    ▼
  Terrain.onChunk()                         主线程
-   │ 存进 chunks，生成 THREE.Mesh 加进场景
-   │ 如果这个区块被玩家改过（edits），先写回改动再在主线程重建网格
+   │ 还原成 Section，每个 section 生成一个 THREE.Mesh 加进场景
+   │ 如果这个区块被玩家改过（edits），先写回改动再在主线程重建涉及的 section
 ```
 
-挖 / 放方块时：`Control` 用射线找到方块 → `Terrain.setBlock()` 改数组、记进 `edits` → 在主线程重建这个区块（和相邻区块）的网格。
+挖 / 放方块时：`Control` 用射线找到方块 → `Terrain.setBlock()` 改 section、记进 `edits` → 在主线程重建这个方块周围 3×3×3 涉及的 section（1~8 个，可能跨区块）。
+
+## 区块的存储（v1）
+
+```text
+Chunk（16×16×384）
+ └─ sections[24]：Section（16×16×16）
+     ├─ nonAir           非空气方块数，0 时整段跳过
+     └─ PalettedContainer
+         ├─ bits = 0     单值：只有 palette[0]
+         ├─ bits 4..8    间接：palette + BitStorage（存调色板下标）
+         └─ bits > 8     直接：BitStorage 存方块 ID
+```
+
+段内下标 `(y * 16 + z) * 16 + x`，和原版相同。`Chunk.index()`（整根柱子内的编号）只给 `edits` 当 key 用。
+
+## 网格与材质（v1）
+
+- 一个 section 两个网格：不透明、水。每个顶点 10 字节：`position` Uint16×3（坐标 ×16）+ `info` Uint8×4（方向、纹理层、AO）。
+- 所有方块共用一个 `ShaderMaterial`，纹理在一个 `DataArrayTexture` 里，纹理坐标和明暗在着色器里算。
+- 包围球写死为 section 的外接球（位置放大存储，three 自动算的不对）。
 
 ## 各目录
 
@@ -56,19 +78,25 @@ terrain.init(seed, settings)                          // 让 Worker 换种子
 | | `physics.ts` | AABB 分轴碰撞 |
 | | `raycast.ts` | DDA 射线选方块 |
 | `terrain/` | `index.ts` | 区块加载 / 卸载、`getBlock` / `setBlock`、改动记录、主线程重建网格 |
-| | `chunk.ts` | 一个区块的方块数组和网格 |
-| | `blocks.ts` | 方块种类、颜色、是否实心、物品栏 |
-| | `mesh/mesher.ts` | 面剔除 + 固定方向光 + 顶点 AO；Worker 和主线程共用 |
-| | `mesh/materials.ts` | 不透明 / 水两个材质 |
+| | `chunk/Chunk.ts` | 一根区块柱：24 个 section + 每个 section 的网格 |
+| | `chunk/Section.ts` | 16³ 的一段，非空气计数 |
+| | `chunk/PalettedContainer.ts` | 调色板容器：单值 / 间接 / 直接三种模式，自动扩容 |
+| | `chunk/BitStorage.ts` | 位压缩数组，值不跨整数 |
+| | `blocks.ts` | 方块种类、每个面的纹理、是否实心、物品栏 |
+| | `mesh/mesher.ts` | 贪婪网格：面剔除 + 顶点 AO + 合并；Worker 和主线程共用 |
+| | `mesh/materials.ts` | 纹理数组 ShaderMaterial：不透明 / 水 / 线框 |
+| | `textures/painters.ts` | 用代码画 16 张纹理 |
+| | `textures/index.ts` | 纹理数组 |
 | | `highlight/` | 选中方块的线框 |
 | | `worker/generate.ts` | Worker 入口：init / chunk / f3 / slice 四个方法 |
-| | `worker/surface.ts` | 密度 → 方块（临时地表规则）→ 网格 |
+| | `worker/surface.ts` | 密度 → 方块（临时地表规则）→ section 压缩 + 网格 |
 | | `worker/pool.ts` | Worker 池，请求交给最空闲的 Worker |
 | | `worker/protocol.ts` | 主线程 ↔ Worker 的消息类型 |
 | | `worker/datapacks.ts` | 读取 `data/` 和 `datapacks/` |
 | | `worldgen/` | 世界生成引擎，见下 |
 | `ui/` | `index.ts` | 菜单、准星、物品栏、加载提示 |
-| | `debug/f3.ts` | F3 调试屏（含原版格式的 NoiseRouter 一行） |
+| | `icons.ts` | 物品栏的立体方块图标 |
+| | `debug/f3.ts` | F3 调试屏（NoiseRouter 一行、内存 / 网格统计）；G、K 键 |
 | | `debug/noiseMap.ts` | M 键噪声图面板 |
 
 ## worldgen：v0 的核心
@@ -102,3 +130,4 @@ terrain.init(seed, settings)                          // 让 Worker 换种子
 | `tests/density.test.ts` | 自带数据包的解析、共享、错误信息、NoiseChunk |
 | `tests/vanilla.test.ts` | 原版数据（没有就跳过） |
 | `tests/game.test.ts` | 射线、碰撞、区块生成 |
+| `tests/chunk.test.ts` | 位压缩、调色板、贪婪网格、纹理 |

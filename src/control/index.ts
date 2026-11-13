@@ -27,6 +27,8 @@ export default class Control {
   feet: Vec3 = { x: 0.5, y: 120, z: 0.5 }
   /** 出生点找好之前不移动（区块还没加载完） */
   spawned = false
+  /** 上一帧水平方向是否撞到了方块（水里爬岸用） */
+  private hitWall = false
   /** 当前选中的物品栏格子 0..8 */
   slot = 0
   /** 准星对准的方块 */
@@ -161,8 +163,9 @@ export default class Control {
 
     const p = this.player
     const body = { half: p.body.width / 2, height: p.body.height }
-    const { onGround } = moveAndCollide(this.feet, p.velocity, dt, body, this.terrain.isSolidAt.bind(this.terrain))
+    const { onGround, hitWall } = moveAndCollide(this.feet, p.velocity, dt, body, this.terrain.isSolidAt.bind(this.terrain))
     p.onGround = onGround
+    this.hitWall = hitWall
     if (onGround && p.flying) p.setMode(Mode.walking) // 飞行时落地自动取消飞行（同原版）
 
     this.syncCamera()
@@ -181,6 +184,12 @@ export default class Control {
   private get inWater(): boolean {
     const b = this.terrain.getBlock(Math.floor(this.feet.x), Math.floor(this.feet.y + 0.4), Math.floor(this.feet.z))
     return b === BlockType.water
+  }
+
+  /** 脚碰到水就算（比 inWater 宽松）：浮在水面上时脚还在水里，身体已经出水了 */
+  private get touchingWater(): boolean {
+    const b = this.terrain.getBlock(Math.floor(this.feet.x), Math.floor(this.feet.y), Math.floor(this.feet.z))
+    return b === BlockType.water || this.inWater
   }
 
   private updateVelocity(dt: number) {
@@ -208,6 +217,11 @@ export default class Control {
     const down = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight')
     if (p.flying) {
       v.y = up ? p.speed * 0.75 : down ? -p.speed * 0.75 : 0
+    } else if (this.hitWall && this.touchingWater && move.lengthSq() > 0) {
+      // 在水里往前游撞到方块：往上蹿一下，好爬上岸。
+      // 原版 LivingEntity.travel 里也是这样：水中水平碰撞时把竖直速度设成 0.3 格/tick（= 6 格/秒）。
+      // 没有这一条的话，浮在水面时脚比岸边低约 0.4 格，又不在地面上不能跳，就永远上不了岸
+      v.y = 6
     } else if (this.inWater) {
       // 水里：重力小、下沉慢，按住空格往上游
       v.y = up ? 3 : Math.max(v.y - p.gravity * 0.2 * dt, -2.5)

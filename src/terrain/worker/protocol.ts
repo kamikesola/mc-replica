@@ -1,4 +1,5 @@
-import type { MeshArrays } from '../mesh/mesher'
+import type { PalettedData } from '../chunk/PalettedContainer'
+import type { SectionMeshes } from './surface'
 
 /**
  * 主线程 ↔ 地形 Worker 的消息格式。
@@ -22,18 +23,18 @@ export interface WorldInfo {
 export interface ChunkData {
   cx: number
   cz: number
-  /** 区块方块数组，下标见 Chunk.index() */
-  blocks: Uint8Array
-  opaque: MeshArrays
-  water: MeshArrays
+  /** 每个 section 的方块（调色板 + 位压缩数组），从下往上 */
+  sections: PalettedData[]
+  /** 每个 section 的网格；整段没有面时为 null */
+  meshes: SectionMeshes[]
   ms: number
 }
 
 export interface Requests {
   /** 设置种子和 noise_settings，返回世界信息 */
   init: [{ seed: string; settings: string }, WorldInfo]
-  /** 生成一个区块：方块 + 网格 */
-  chunk: [{ cx: number; cz: number }, ChunkData]
+  /** 生成一个区块：方块 + 网格。greedy=false 时不合并面（对比用） */
+  chunk: [{ cx: number; cz: number; greedy: boolean }, ChunkData]
   /** F3 调试屏的 NoiseRouter 一行 */
   f3: [{ x: number; y: number; z: number }, { line: string }]
   /** 噪声图面板：以 (cx, cz) 为中心采一张 size×size 的俯视图 */

@@ -42,10 +42,11 @@ export function collides(pos: Vec3, body: Body, solid: SolidFn): boolean {
 
 /**
  * 按速度移动 dt 秒，处理碰撞。会直接修改 pos 和 vel。
- * @returns onGround：这一帧是否落在了方块上
+ * @returns onGround：这一帧是否落在了方块上；hitWall：水平方向是否撞到了方块
  */
-export function moveAndCollide(pos: Vec3, vel: Vec3, dt: number, body: Body, solid: SolidFn): { onGround: boolean } {
+export function moveAndCollide(pos: Vec3, vel: Vec3, dt: number, body: Body, solid: SolidFn): { onGround: boolean; hitWall: boolean } {
   let onGround = false
+  let hitWall = false
   const maxDelta = Math.max(Math.abs(vel.x), Math.abs(vel.y), Math.abs(vel.z)) * dt
   const steps = Math.max(1, Math.ceil(maxDelta / 0.45))
   const h = dt / steps
@@ -70,6 +71,7 @@ export function moveAndCollide(pos: Vec3, vel: Vec3, dt: number, body: Body, sol
     if (collides(pos, body, solid)) {
       pos.x = dx > 0 ? Math.floor(pos.x + body.half) - body.half - EPS : Math.floor(pos.x - body.half) + 1 + body.half + EPS
       vel.x = 0
+      hitWall = true
     }
 
     // ---- z
@@ -78,7 +80,8 @@ export function moveAndCollide(pos: Vec3, vel: Vec3, dt: number, body: Body, sol
     if (collides(pos, body, solid)) {
       pos.z = dz > 0 ? Math.floor(pos.z + body.half) - body.half - EPS : Math.floor(pos.z - body.half) + 1 + body.half + EPS
       vel.z = 0
+      hitWall = true
     }
   }
-  return { onGround }
+  return { onGround, hitWall }
 }

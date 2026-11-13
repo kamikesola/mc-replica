@@ -2,6 +2,7 @@ import type Control from '../control'
 import type Core from '../core'
 import type Terrain from '../terrain'
 import { BLOCKS, HOTBAR } from '../terrain/blocks'
+import { blockIcon } from './icons'
 import type { WorldInfo } from '../terrain/worker/protocol'
 import { $, isMobile } from '../utils'
 import F3 from './debug/f3'
@@ -36,7 +37,7 @@ export default class UI {
     private readonly terrain: Terrain,
     private readonly control: Control
   ) {
-    this.f3 = new F3(terrain, control)
+    this.f3 = new F3(core, terrain, control)
     this.noiseMap = new NoiseMap(terrain, control)
     this.initMenu()
     this.initHotbar()
@@ -100,11 +101,10 @@ export default class UI {
   // ---------------------------------------------------------------- 物品栏
 
   initHotbar = () => {
-    this.hotbar.innerHTML = HOTBAR.map((type, i) => {
-      const b = BLOCKS[type]
-      const c = (rgb: number[]) => `rgb(${rgb.map((v) => Math.round(v * 255)).join(',')})`
-      return `<div class="slot" title="${b.name}"><i style="background:linear-gradient(${c(b.top)} 0 35%, ${c(b.side)} 35%)"></i><span>${i + 1}</span></div>`
-    }).join('')
+    // 每格画一个小方块图标（用的就是方块自己的纹理，见 ui/icons.ts）
+    this.hotbar.innerHTML = HOTBAR.map(
+      (type, i) => `<div class="slot" title="${BLOCKS[type].name}"><img src="${blockIcon(type)}" alt=""><span>${i + 1}</span></div>`
+    ).join('')
   }
 
   // ---------------------------------------------------------------- 每帧

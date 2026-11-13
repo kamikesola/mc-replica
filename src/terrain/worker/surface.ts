@@ -1,5 +1,6 @@
-import { BlockType } from '../blocks'
-import { buildChunkMesh } from '../mesh/mesher'
+import { BLOCK_BITS, BlockType } from '../blocks'
+import PalettedContainer, { type PalettedData } from '../chunk/PalettedContainer'
+import { meshSection, N, nIndex, type MeshOptions, type SectionMesh } from '../mesh/mesher'
 import { NoiseChunk, type NoiseSettingsInfo, type Worldgen } from '../worldgen'
 
 /**
@@ -7,7 +8,7 @@ import { NoiseChunk, type NoiseSettingsInfo, type Worldgen } from '../worldgen'
  *
  *   1. NoiseChunk 按原版规则算出每个方块的 final_density，> 0 是石头，≤ 0 是空气
  *   2. 临时的“地表规则”：把最上面几层石头换成草/土/沙，海平面以下的空气换成水
- *   3. 面剔除生成网格
+ *   3. 切成 16³ 的 section，每段用调色板压缩，并生成贪婪网格
  *
  * 第 1 步与原版一致（v0 的成果）；第 2 步是我自己写的近似版，原版的地表规则（surface_rule）
  * 依赖生物群系，留到 v4 再做。含水层也没做，所以洞穴里不会有水。
@@ -27,7 +28,10 @@ function hash01(x: number, y: number, z: number): number {
   return (h >>> 0) / 4294967296
 }
 
-export function generateChunk(wg: Worldgen, settingsId: string, s: NoiseSettingsInfo, cx: number, cz: number) {
+/** 一个 section 的网格；整段没有面时为 null */
+export type SectionMeshes = { opaque: SectionMesh; water: SectionMesh } | null
+
+export function generateChunk(wg: Worldgen, settingsId: string, s: NoiseSettingsInfo, cx: number, cz: number, opts: MeshOptions = {}) {
   const t0 = performance.now()
   const H = s.height
   const minY = s.minY
@@ -106,24 +110,34 @@ export function generateChunk(wg: Worldgen, settingsId: string, s: NoiseSettings
     }
   }
 
-  // ---- 3. 网格（用带外圈的数组判断邻居）
-  const { opaque, water } = buildChunkMesh(
-    (lx, y, lz) => (y < minY || y >= minY + H ? BlockType.air : padded[pidx(lx + PAD, y, lz + PAD)]),
-    minY,
-    H,
-    cx,
-    cz
-  )
+  // ---- 3. 切成 section：压缩 + 生成网格
+  const sectionCount = H >> 4
+  const sections: PalettedData[] = []
+  const meshes: SectionMeshes[] = []
+  const values = new Uint8Array(4096)
+  const hood = new Uint8Array(N * N * N) // 18³ 邻域，给网格生成用
+  const at = (px: number, y: number, pz: number) => (y < minY || y >= minY + H ? BlockType.air : padded[pidx(px, y, pz)])
 
-  // 只把中间 16×16 交给主线程（下标规则与 Chunk.index 相同）
-  const blocks = new Uint8Array(16 * 16 * H)
-  for (let y = minY; y < minY + H; y++) {
-    for (let lz = 0; lz < 16; lz++) {
-      for (let lx = 0; lx < 16; lx++) {
-        blocks[((y - minY) * 16 + lz) * 16 + lx] = padded[pidx(lx + PAD, y, lz + PAD)]
-      }
+  for (let sy = 0; sy < sectionCount; sy++) {
+    const y0 = minY + sy * 16
+    // 中间 16³ → 调色板容器（段内下标 (y*16+z)*16+x）
+    for (let ly = 0; ly < 16; ly++)
+      for (let lz = 0; lz < 16; lz++)
+        for (let lx = 0; lx < 16; lx++) values[(ly * 16 + lz) * 16 + lx] = padded[pidx(lx + PAD, y0 + ly, lz + PAD)]
+    const container = PalettedContainer.fromValues(values, BLOCK_BITS)
+    sections.push(container.toData())
+
+    // 整段都是空气：没有任何面，跳过网格
+    if (container.isSingle && container.palette[0] === BlockType.air) {
+      meshes.push(null)
+      continue
     }
+    for (let ly = -1; ly <= 16; ly++)
+      for (let lz = -1; lz <= 16; lz++)
+        for (let lx = -1; lx <= 16; lx++) hood[nIndex(lx, ly, lz)] = at(lx + PAD, y0 + ly, lz + PAD)
+    const m = meshSection(hood, opts)
+    meshes.push(m.opaque.indices.length + m.water.indices.length > 0 ? m : null)
   }
 
-  return { cx, cz, blocks, opaque, water, ms: performance.now() - t0 }
+  return { cx, cz, sections, meshes, ms: performance.now() - t0 }
 }

@@ -1,9 +1,10 @@
 import * as THREE from 'three'
 import { BlockType, isSolid } from './blocks'
-import Chunk, { CHUNK_SIZE } from './chunk'
+import Chunk, { CHUNK_SIZE } from './chunk/Chunk'
+import Section from './chunk/Section'
 import Highlight from './highlight'
 import Materials from './mesh/materials'
-import { buildChunkMesh, type MeshArrays } from './mesh/mesher'
+import { meshSection, N, nIndex, POSITION_SCALE, type SectionMesh } from './mesh/mesher'
 import type { ChunkData, WorldInfo } from './worker/protocol'
 import WorkerPool from './worker/pool'
 
@@ -19,6 +20,8 @@ export { BlockType } from './blocks'
  *
  * 另外提供 getBlock / setBlock，给碰撞检测和挖放方块用。
  * 玩家改过的方块记在 edits 里（相当于原项目的 customBlocks），区块卸载后再加载也不会丢。
+ *
+ * v1 的变化：区块按 16³ 的 section 存储和画。挖一个方块只重建它周围的 section，而不是整根区块。
  */
 export default class Terrain {
   scene: THREE.Scene
@@ -32,15 +35,19 @@ export default class Terrain {
   chunks = new Map<string, Chunk>()
   /** 正在 Worker 里生成的区块 */
   private loading = new Set<string>()
-  /** 每次换种子 +1，用来丢弃旧种子的区块结果 */
+  /** 每次换种子 / 重新加载 +1，用来丢弃旧的区块结果 */
   private generation = 0
-  /** 玩家改过的方块：区块 key → (方块下标 → 方块类型) */
+  /** 玩家改过的方块：区块 key → (方块编号 → 方块类型)，编号见 Chunk.index() */
   edits = new Map<string, Map<number, BlockType>>()
+  /** 贪婪网格开关（G 键），关掉就是 v0 那样一个面一个四边形，方便对比 */
+  greedy = true
 
   /** 世界信息（种子、高度、海平面……），init 之后才有 */
   info: WorldInfo | null = null
   /** 最近一个区块的生成耗时，F3 里显示 */
   lastChunkMs = 0
+  /** 最近一次主线程重建 section 网格的耗时 */
+  lastRemeshMs = 0
 
   constructor(scene: THREE.Scene, camera: THREE.PerspectiveCamera) {
     this.scene = scene
@@ -50,13 +57,38 @@ export default class Terrain {
 
   /** 通知所有 Worker 换种子 / noise_settings，并清空现有区块 */
   async init(seed: string, settings: string): Promise<WorldInfo> {
+    this.edits.clear()
+    this.reload()
+    this.info = await this.pool.broadcast('init', { seed, settings })
+    return this.info
+  }
+
+  /** 丢掉所有区块重新生成（玩家改动保留） */
+  reload(): void {
     for (const c of this.chunks.values()) c.dispose(this.scene)
     this.chunks.clear()
     this.loading.clear()
-    this.edits.clear()
     this.generation++
-    this.info = await this.pool.broadcast('init', { seed, settings })
-    return this.info
+  }
+
+  setGreedy(on: boolean): void {
+    this.greedy = on
+    this.reload()
+  }
+
+  /** 线框开关（K 键）：给每个 section 网格挂一个共用几何体的线框子网格 */
+  setWireframe(on: boolean): void {
+    this.materials.wireframe = on
+    for (const c of this.chunks.values()) for (const m of [...c.meshes, ...c.waterMeshes]) if (m) this.applyWire(m)
+  }
+
+  private applyWire(mesh: THREE.Mesh): void {
+    const has = mesh.children.length > 0
+    if (this.materials.wireframe && !has) {
+      const w = new THREE.Mesh(mesh.geometry, this.materials.wire)
+      w.renderOrder = 2
+      mesh.add(w)
+    } else if (!this.materials.wireframe && has) mesh.clear()
   }
 
   // ---------------------------------------------------------------- 每帧调用
@@ -94,7 +126,7 @@ export default class Terrain {
     const generation = this.generation
     this.loading.add(key)
     this.pool
-      .call('chunk', { cx, cz })
+      .call('chunk', { cx, cz, greedy: this.greedy })
       .then((data) => {
         if (generation !== this.generation) return // 期间换了种子，结果作废
         this.loading.delete(key)
@@ -108,7 +140,8 @@ export default class Terrain {
 
   private onChunk(data: ChunkData): void {
     const info = this.info!
-    const chunk = new Chunk(data.cx, data.cz, info.minY, info.height, data.blocks)
+    const sections = data.sections.map((d) => Section.fromData(d))
+    const chunk = new Chunk(data.cx, data.cz, info.minY, info.height, sections)
     const key = `${data.cx},${data.cz}`
     this.chunks.set(key, chunk)
     this.lastChunkMs = data.ms
@@ -116,10 +149,20 @@ export default class Terrain {
     const edits = this.edits.get(key)
     if (edits && edits.size > 0) {
       // 有玩家改动：先把改动写回去，再在主线程重新生成网格
-      for (const [i, type] of edits) chunk.blocks[i] = type
-      this.remesh(chunk)
+      const touched = new Set<number>()
+      for (const [i, type] of edits) {
+        const lx = i & 15
+        const lz = (i >> 4) & 15
+        const y = (i >> 8) + chunk.minY
+        chunk.set(lx, y, lz, type)
+        touched.add(chunk.sectionIndex(y))
+      }
+      for (let sy = 0; sy < sections.length; sy++) {
+        if (touched.has(sy) || touched.has(sy - 1) || touched.has(sy + 1)) this.remeshSection(chunk, sy)
+        else this.setSectionMesh(chunk, sy, data.meshes[sy])
+      }
     } else {
-      this.setMeshes(chunk, data.opaque, data.water)
+      for (let sy = 0; sy < sections.length; sy++) this.setSectionMesh(chunk, sy, data.meshes[sy])
     }
   }
 
@@ -154,72 +197,129 @@ export default class Terrain {
     if (!this.edits.has(key)) this.edits.set(key, new Map())
     this.edits.get(key)!.set(Chunk.index(lx, y, lz, c.minY), type)
 
-    // 重建这个区块；如果改的是边上的方块，相邻区块的面也要更新
-    this.remesh(c)
-    if (lx === 0) this.remeshAt(c.cx - 1, c.cz)
-    if (lx === 15) this.remeshAt(c.cx + 1, c.cz)
-    if (lz === 0) this.remeshAt(c.cx, c.cz - 1)
-    if (lz === 15) this.remeshAt(c.cx, c.cz + 1)
+    // 重建受影响的 section：方块本身所在的，加上它周围 3×3×3 范围碰到的
+    // （邻居的面要不要画、角上的 AO 都可能因为这个方块改变，可能跨到相邻 section / 区块）
+    const t0 = performance.now()
+    const done = new Set<string>()
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          const ny = y + dy
+          if (ny < this.info.minY || ny >= this.info.minY + this.info.height) continue
+          const nc = this.getChunk(x + dx, z + dz)
+          if (!nc) continue
+          const sy = nc.sectionIndex(ny)
+          const k = `${nc.cx},${nc.cz},${sy}`
+          if (done.has(k)) continue
+          done.add(k)
+          this.remeshSection(nc, sy)
+        }
+      }
+    }
+    this.lastRemeshMs = performance.now() - t0
   }
 
   /** 某一列最高的实心方块的 y；没加载时返回 null */
   topSolidY(x: number, z: number): number | null {
     const c = this.getChunk(x, z)
     if (!c) return null
-    for (let y = c.minY + c.height - 1; y >= c.minY; y--) {
-      if (isSolid(c.get(x - c.cx * CHUNK_SIZE, y, z - c.cz * CHUNK_SIZE))) return y
+    const lx = x - c.cx * CHUNK_SIZE
+    const lz = z - c.cz * CHUNK_SIZE
+    for (let sy = c.sections.length - 1; sy >= 0; sy--) {
+      if (c.sections[sy].isEmpty) continue // 整段空气，直接跳过 16 格
+      for (let ly = 15; ly >= 0; ly--) if (isSolid(c.sections[sy].get(lx, ly, lz))) return c.minY + sy * 16 + ly
     }
     return c.minY
   }
 
   // ---------------------------------------------------------------- 网格
 
-  private remeshAt(cx: number, cz: number): void {
-    const c = this.chunks.get(`${cx},${cz}`)
-    if (c) this.remesh(c)
+  /** 在主线程重建一个 section 的网格 */
+  remeshSection(c: Chunk, sy: number): void {
+    const hood = new Uint8Array(N * N * N)
+    this.fillNeighborhood(c, sy, hood)
+    const m = meshSection(hood, { greedy: this.greedy })
+    this.setSectionMesh(c, sy, m.opaque.indices.length + m.water.indices.length > 0 ? m : null)
   }
 
-  /** 在主线程重建网格：邻居方块从相邻区块读，相邻区块没加载就当空气 */
-  remesh(c: Chunk): void {
-    const ox = c.cx * CHUNK_SIZE
-    const oz = c.cz * CHUNK_SIZE
-    const { opaque, water } = buildChunkMesh(
-      (lx, y, lz) => {
-        if (lx >= 0 && lx < 16 && lz >= 0 && lz < 16) return c.get(lx, y, lz)
-        return this.getBlock(ox + lx, y, oz + lz) ?? BlockType.air
-      },
-      c.minY,
-      c.height,
-      c.cx,
-      c.cz
-    )
-    this.setMeshes(c, opaque, water)
+  /**
+   * 填 18³ 的邻域：section 本身 + 四周一圈（可能在相邻的 section 或相邻的区块里）。
+   * 先把周围 3×3 个区块取出来，避免每个方块都去 Map 里查一次。没加载的邻居当作空气。
+   */
+  private fillNeighborhood(c: Chunk, sy: number, out: Uint8Array): void {
+    const around: (Chunk | undefined)[] = []
+    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) around.push(this.chunks.get(`${c.cx + dx},${c.cz + dz}`))
+    const y0 = c.minY + sy * 16
+    for (let ly = -1; ly <= 16; ly++) {
+      for (let lz = -1; lz <= 16; lz++) {
+        const dz = lz < 0 ? -1 : lz > 15 ? 1 : 0
+        for (let lx = -1; lx <= 16; lx++) {
+          const dx = lx < 0 ? -1 : lx > 15 ? 1 : 0
+          const n = around[(dz + 1) * 3 + (dx + 1)]
+          out[nIndex(lx, ly, lz)] = n ? n.get(lx - dx * 16, y0 + ly, lz - dz * 16) : BlockType.air
+        }
+      }
+    }
   }
 
-  private setMeshes(c: Chunk, opaque: MeshArrays, water: MeshArrays): void {
-    c.dispose(this.scene)
-    c.mesh = this.toMesh(opaque, this.materials.opaque, c)
-    c.waterMesh = this.toMesh(water, this.materials.water, c)
-    if (c.waterMesh) c.waterMesh.renderOrder = 1 // 水最后画
+  private setSectionMesh(c: Chunk, sy: number, m: { opaque: SectionMesh; water: SectionMesh } | null): void {
+    c.disposeSection(this.scene, sy)
+    if (!m) return
+    c.meshes[sy] = this.toMesh(m.opaque, this.materials.opaque, c, sy)
+    c.waterMeshes[sy] = this.toMesh(m.water, this.materials.water, c, sy)
+    if (c.waterMeshes[sy]) c.waterMeshes[sy]!.renderOrder = 1 // 水最后画
   }
 
-  private toMesh(a: MeshArrays, material: THREE.Material, c: Chunk): THREE.Mesh | null {
+  private toMesh(a: SectionMesh, material: THREE.Material, c: Chunk, sy: number): THREE.Mesh | null {
     if (a.indices.length === 0) return null
     const g = new THREE.BufferGeometry()
     g.setAttribute('position', new THREE.BufferAttribute(a.positions, 3))
-    g.setAttribute('color', new THREE.BufferAttribute(a.colors, 3))
+    g.setAttribute('info', new THREE.BufferAttribute(a.info, 4))
     g.setIndex(new THREE.BufferAttribute(a.indices, 1))
-    g.computeBoundingSphere() // 视锥剔除要用：屏幕外的区块不画
+    // 位置是放大 16 倍存的，three 自己算出来的包围球会大 16 倍。
+    // 一个 section 就是 16³ 的立方体，包围球直接写死（视锥剔除用它判断这个 section 在不在屏幕里）
+    const S = 16 * POSITION_SCALE
+    g.boundingBox = new THREE.Box3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(S, S, S))
+    g.boundingSphere = new THREE.Sphere(new THREE.Vector3(8, 8, 8), 8 * Math.sqrt(3))
     const mesh = new THREE.Mesh(g, material)
-    mesh.position.set(c.cx * CHUNK_SIZE, 0, c.cz * CHUNK_SIZE)
+    mesh.position.set(c.cx * CHUNK_SIZE, c.minY + sy * 16, c.cz * CHUNK_SIZE)
     mesh.matrixAutoUpdate = false
     mesh.updateMatrix()
+    this.applyWire(mesh)
     this.scene.add(mesh)
     return mesh
   }
 
-  /** 已加载 / 正在生成的区块数，F3 用 */
+  /** F3 用的统计 */
   get stats() {
-    return { loaded: this.chunks.size, loading: this.loading.size }
+    let bytes = 0
+    let meshBytes = 0
+    let sectionMeshes = 0
+    let vertices = 0
+    let quads = 0
+    for (const c of this.chunks.values()) {
+      bytes += c.byteSize
+      for (const m of [...c.meshes, ...c.waterMeshes]) {
+        if (!m) continue
+        sectionMeshes++
+        const g = m.geometry
+        for (const a of [g.attributes.position, g.attributes.info, g.index!]) meshBytes += (a.array as Uint8Array).byteLength
+        vertices += g.attributes.position.count
+        quads += g.index!.count / 6
+      }
+    }
+    const height = this.info?.height ?? 0
+    return {
+      loaded: this.chunks.size,
+      loading: this.loading.size,
+      /** 方块数据（调色板压缩后） */
+      bytes,
+      /** 同样的区块用 v0 的方式（每格 1 字节）要多少 */
+      v0Bytes: this.chunks.size * 16 * 16 * height,
+      meshBytes,
+      sectionMeshes,
+      vertices,
+      quads
+    }
   }
 }

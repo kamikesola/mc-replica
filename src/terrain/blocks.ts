@@ -1,8 +1,10 @@
+import { TEXTURE_LAYER, type TextureName } from './textures/painters'
+
 /**
- * 方块种类。和原项目的 BlockType 一样是一个枚举，值存进区块的 Uint8Array 里。
+ * 方块种类。和原项目的 BlockType 一样是一个枚举，值就是存进调色板的方块 ID。
  *
- * v0 还没有纹理（原版纹理有版权，v1 做纹理图集时换成自己画的 / CC0 的），
- * 每种方块先用一个颜色表示。
+ * v1 起每个方块有了纹理：顶面 / 侧面 / 底面各指定一张（见 textures/painters.ts）。
+ * 原版的“方块状态”（朝向、台阶上下半等）留到 v7。
  */
 export enum BlockType {
   air = 0,
@@ -23,43 +25,58 @@ export enum BlockType {
 
 export interface BlockInfo {
   name: string
-  /** 顶面颜色 / 侧面颜色 / 底面颜色（0..1 的 RGB） */
-  top: [number, number, number]
-  side: [number, number, number]
-  bottom: [number, number, number]
+  /** 顶面 / 侧面 / 底面的纹理 */
+  textures: { top: TextureName; side: TextureName; bottom: TextureName }
   /** 实心：会挡住玩家，也会挡住相邻方块的面 */
   solid: boolean
   /** 能不能被玩家挖掉 */
   breakable: boolean
 }
 
-const rgb = (hex: number): [number, number, number] => [((hex >> 16) & 255) / 255, ((hex >> 8) & 255) / 255, (hex & 255) / 255]
-const same = (hex: number, name: string, extra: Partial<BlockInfo> = {}): BlockInfo => ({
+const block = (name: string, top: TextureName, side = top, bottom = top, extra: Partial<BlockInfo> = {}): BlockInfo => ({
   name,
-  top: rgb(hex),
-  side: rgb(hex),
-  bottom: rgb(hex),
+  textures: { top, side, bottom },
   solid: true,
   breakable: true,
   ...extra
 })
 
 export const BLOCKS: Record<BlockType, BlockInfo> = {
-  [BlockType.air]: { ...same(0, '空气'), solid: false, breakable: false },
-  [BlockType.stone]: same(0x7f7f7f, '石头'),
-  [BlockType.deepslate]: same(0x50505a, '深板岩'),
-  [BlockType.dirt]: same(0x866043, '泥土'),
-  [BlockType.grass]: { ...same(0x866043, '草方块'), top: rgb(0x6aa84f) },
-  [BlockType.sand]: same(0xdbd3a0, '沙子'),
-  [BlockType.gravel]: same(0x857f7a, '沙砾'),
-  [BlockType.water]: { ...same(0x3f76e4, '水'), solid: false, breakable: false },
-  [BlockType.bedrock]: { ...same(0x3a3a3a, '基岩'), breakable: false },
-  [BlockType.planks]: same(0xa2834f, '木板'),
-  [BlockType.cobblestone]: same(0x6b6b6b, '圆石'),
-  [BlockType.log]: { ...same(0x6b5132, '原木'), top: rgb(0xa58a5e), bottom: rgb(0xa58a5e) },
-  [BlockType.leaves]: same(0x3f7a2a, '树叶'),
-  [BlockType.glowstone]: same(0xf3d27a, '萤石')
+  [BlockType.air]: block('空气', 'stone', 'stone', 'stone', { solid: false, breakable: false }),
+  [BlockType.stone]: block('石头', 'stone'),
+  [BlockType.deepslate]: block('深板岩', 'deepslate_top', 'deepslate'),
+  [BlockType.dirt]: block('泥土', 'dirt'),
+  [BlockType.grass]: block('草方块', 'grass_top', 'grass_side', 'dirt'),
+  [BlockType.sand]: block('沙子', 'sand'),
+  [BlockType.gravel]: block('沙砾', 'gravel'),
+  [BlockType.water]: block('水', 'water', 'water', 'water', { solid: false, breakable: false }),
+  [BlockType.bedrock]: block('基岩', 'bedrock', 'bedrock', 'bedrock', { breakable: false }),
+  [BlockType.planks]: block('木板', 'planks'),
+  [BlockType.cobblestone]: block('圆石', 'cobblestone'),
+  [BlockType.log]: block('原木', 'log_top', 'log'),
+  [BlockType.leaves]: block('树叶', 'leaves'),
+  [BlockType.glowstone]: block('萤石', 'glowstone')
 }
+
+/** 方块种类数 */
+export const BLOCK_COUNT = Object.keys(BLOCKS).length
+
+/** 调色板“直接模式”下每格的位数：ceil(log2(方块种类数))，原版约 2.6 万种状态 → 15 位 */
+export const BLOCK_BITS = Math.ceil(Math.log2(BLOCK_COUNT))
+
+/**
+ * 每种方块 6 个面的纹理层号，网格生成时直接查表。
+ * 面的顺序：-x, +x, -y, +y, -z, +z（和 mesh/greedy.ts 的 FACES 一致）
+ */
+export const FACE_TEXTURES: Uint8Array = (() => {
+  const t = new Uint8Array(BLOCK_COUNT * 6)
+  for (let b = 0; b < BLOCK_COUNT; b++) {
+    const { top, side, bottom } = BLOCKS[b as BlockType].textures
+    const layers = [side, side, bottom, top, side, side].map((n) => TEXTURE_LAYER[n])
+    t.set(layers, b * 6)
+  }
+  return t
+})()
 
 /** 物品栏里能放的方块（数字键 1–9） */
 export const HOTBAR: BlockType[] = [
@@ -74,4 +91,7 @@ export const HOTBAR: BlockType[] = [
   BlockType.glowstone
 ]
 
-export const isSolid = (b: number) => BLOCKS[b as BlockType]?.solid ?? false
+/** 实心表：SOLID[b] = 1 表示实心。网格生成时每个方块都要查好几次，用数组比查对象快 */
+export const SOLID: Uint8Array = Uint8Array.from({ length: 256 }, (_, b) => (BLOCKS[b as BlockType]?.solid ? 1 : 0))
+
+export const isSolid = (b: number) => SOLID[b] === 1

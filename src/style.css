@@ -174,11 +174,10 @@ canvas {
 #hotbar .slot.on {
   border-color: #fff;
 }
-#hotbar .slot i {
-  width: 26px;
-  height: 26px;
-  border-radius: 2px;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25);
+#hotbar .slot img {
+  width: 32px;
+  height: 32px;
+  image-rendering: pixelated;
 }
 #hotbar .slot span {
   position: absolute;

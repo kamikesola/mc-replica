@@ -46,9 +46,15 @@ const handlers: { [M in Method]: Handler<M> } = {
 
   chunk(wg, p) {
     if (!settings) throw new Error('还没有 init')
-    const r = generateChunk(wg, settingsId, settings, p.cx, p.cz)
-    const buffers = [r.blocks, r.opaque.positions, r.opaque.colors, r.opaque.indices, r.water.positions, r.water.colors, r.water.indices]
-    return [r, buffers.map((a) => a.buffer)]
+    const r = generateChunk(wg, settingsId, settings, p.cx, p.cz, { greedy: p.greedy })
+    // 所有数组的底层内存直接“转移”给主线程，不复制
+    const buffers: ArrayBufferLike[] = []
+    for (const s of r.sections) if (s.data) buffers.push(s.data.buffer)
+    for (const m of r.meshes) {
+      if (!m) continue
+      for (const part of [m.opaque, m.water]) buffers.push(part.positions.buffer, part.info.buffer, part.indices.buffer)
+    }
+    return [r, buffers as Transferable[]]
   },
 
   f3(wg, p) {

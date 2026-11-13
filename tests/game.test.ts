@@ -6,6 +6,7 @@ import { test } from 'node:test'
 import { collides, moveAndCollide } from '../src/control/physics'
 import { raycast } from '../src/control/raycast'
 import { BlockType } from '../src/terrain/blocks'
+import Section from '../src/terrain/chunk/Section'
 import { generateChunk } from '../src/terrain/worker/surface'
 import { Worldgen } from '../src/terrain/worldgen/Worldgen'
 import { builtinPack } from './loadDatapack'
@@ -42,7 +43,8 @@ test('碰撞：撞墙会停下但另一个方向可以继续滑动', () => {
   const solid = (x: number, y: number) => y < 64 || x >= 5
   const pos = { x: 4.5, y: 64, z: 0.5 }
   const vel = { x: 4, y: 0, z: 4 }
-  moveAndCollide(pos, vel, 0.25, body, solid)
+  const { hitWall } = moveAndCollide(pos, vel, 0.25, body, solid)
+  assert.ok(hitWall) // 水里爬岸靠这个标记
   assert.ok(pos.x < 5 - 0.3 + 1e-3, `x = ${pos.x}`)
   assert.ok(pos.z > 1.4, `z = ${pos.z}`)
 })
@@ -59,10 +61,14 @@ test('区块生成：底部是基岩，地表有草或沙，海平面以下有�
     [-10, 7]
   ]) {
     const c = generateChunk(wg, 'demo:overworld_lite', s, cx, cz)
-    assert.equal(c.blocks.length, 16 * 16 * H)
-    for (let i = 0; i < 256; i++) assert.equal(c.blocks[i], BlockType.bedrock) // y = minY 一层全是基岩
-    for (const b of c.blocks) counts.set(b, (counts.get(b) ?? 0) + 1)
-    assert.ok(c.opaque.indices.length > 0)
+    assert.equal(c.sections.length, H / 16)
+    const bottom = Section.fromData(c.sections[0])
+    for (let i = 0; i < 256; i++) assert.equal(bottom.blocks.get(i), BlockType.bedrock) // y = minY 一层全是基岩
+    for (const d of c.sections) {
+      const sec = Section.fromData(d)
+      for (let i = 0; i < 4096; i++) counts.set(sec.blocks.get(i), (counts.get(sec.blocks.get(i)) ?? 0) + 1)
+    }
+    assert.ok(c.meshes.some((m) => m && m.opaque.indices.length > 0))
   }
   assert.ok((counts.get(BlockType.grass) ?? 0) + (counts.get(BlockType.sand) ?? 0) > 0)
   assert.ok((counts.get(BlockType.stone) ?? 0) > 0)

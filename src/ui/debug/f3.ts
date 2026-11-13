@@ -1,7 +1,8 @@
 import type Control from '../../control'
+import type Core from '../../core'
 import type Terrain from '../../terrain'
 import { BLOCKS } from '../../terrain/blocks'
-import { CHUNK_SIZE } from '../../terrain/chunk'
+import { CHUNK_SIZE } from '../../terrain/chunk/Chunk'
 
 /**
  * F3 调试屏。左上角显示坐标、区块、朝向、帧率，以及最重要的一行：
@@ -12,6 +13,10 @@ import { CHUNK_SIZE } from '../../terrain/chunk'
  * 这是 v0 “与原版一致”最直接的验证方式。
  *
  * NoiseRouter 那一行要在 Worker 里算（单点求值要几十微秒），所以每 0.25 秒才更新一次。
+ *
+ * v1 加了渲染统计（内存、顶点、绘制调用），以及两个对比用的按键：
+ *   G  贪婪网格开 / 关（关掉就是 v0 那样一个面一个四边形，会重新生成所有区块）
+ *   K  线框模式，看得见合并出来的大矩形
  */
 export default class F3 {
   el: HTMLElement
@@ -21,6 +26,7 @@ export default class F3 {
   private querying = false
 
   constructor(
+    private readonly core: Core,
     private readonly terrain: Terrain,
     private readonly control: Control
   ) {
@@ -30,6 +36,10 @@ export default class F3 {
         e.preventDefault()
         this.visible = !this.visible
         this.el.classList.toggle('hidden', !this.visible)
+      } else if (e.code === 'KeyG') {
+        this.terrain.setGreedy(!this.terrain.greedy)
+      } else if (e.code === 'KeyK') {
+        this.terrain.setWireframe(!this.terrain.materials.wireframe)
       }
     })
   }
@@ -55,11 +65,16 @@ export default class F3 {
     const info = this.terrain.info
     const t = this.control.target
     const targetName = t ? BLOCKS[this.terrain.getBlock(t.x, t.y, t.z) ?? 0].name : '—'
-    const { loaded, loading } = this.terrain.stats
+    const st = this.terrain.stats
+    const r = this.core.renderer.info.render
+    const mb = (b: number) => (b / 1048576).toFixed(1) + ' MB'
     const lines = [
-      `mc-replica v0 (${fps} fps)`,
+      `mc-replica v1 (${fps} fps)`,
       `种子: ${info?.seed ?? '…'}    noise_settings: ${info?.settings ?? '…'}`,
-      `区块: ${loaded} 已加载, ${loading} 生成中, 上一个用时 ${this.terrain.lastChunkMs.toFixed(0)} ms`,
+      `区块: ${st.loaded} 已加载, ${st.loading} 生成中, 上一个用时 ${this.terrain.lastChunkMs.toFixed(0)} ms, 挖/放重建 ${this.terrain.lastRemeshMs.toFixed(1)} ms`,
+      `方块数据: ${mb(st.bytes)}（v0 的存法要 ${mb(st.v0Bytes)}）`,
+      `网格: ${this.terrain.greedy ? '贪婪' : '逐面'} [G]${this.terrain.materials.wireframe ? ' 线框' : ''} [K]  ${st.sectionMeshes} 个 section 网格, ${st.quads.toLocaleString()} 个四边形, ${mb(st.meshBytes)}`,
+      `本帧: ${r.calls} 次绘制, ${r.triangles.toLocaleString()} 个三角形`,
       '',
       `XYZ: ${f.x.toFixed(3)} / ${f.y.toFixed(5)} / ${f.z.toFixed(3)}`,
       `Block: ${bx} ${by} ${bz}`,

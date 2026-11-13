@@ -2,7 +2,7 @@
   "name": "mc-replica",
   "version": "0.0.0",
   "private": true,
-  "description": "用 TypeScript + three.js 逐版复刻 Minecraft Java 版 1.21.1 —— v0：随机数、噪声与 JSON 密度函数",
+  "description": "用 TypeScript + three.js 逐版复刻 Minecraft Java 版 1.21.1 —— v1：section 调色板存储、贪婪网格、方块纹理",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -10,7 +10,7 @@
     "build": "tsc --noEmit && vite build",
     "build:public": "tsc --noEmit && vite build --mode public",
     "preview": "vite preview",
-    "test": "tsx --test tests/parity.test.ts tests/density.test.ts tests/vanilla.test.ts tests/game.test.ts",
+    "test": "tsx --test tests/parity.test.ts tests/density.test.ts tests/vanilla.test.ts tests/game.test.ts tests/chunk.test.ts",
     "typecheck": "tsc --noEmit",
     "parity": "javac -d tools/parity/out tools/parity/Parity.java && java -cp tools/parity/out Parity > tests/fixtures/parity.json"
   },

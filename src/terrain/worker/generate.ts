@@ -48,7 +48,7 @@ const handlers: { [M in Method]: Handler<M> } = {
     if (!settings) throw new Error('还没有 init')
     const r = generateChunk(wg, settingsId, settings, p.cx, p.cz, { greedy: p.greedy })
     // 所有数组的底层内存直接“转移”给主线程，不复制
-    const buffers: ArrayBufferLike[] = []
+    const buffers: ArrayBufferLike[] = [r.fluidUpdates.buffer]
     for (const s of r.sections) if (s.data) buffers.push(s.data.buffer)
     for (const m of r.meshes) {
       if (!m) continue

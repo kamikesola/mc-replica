@@ -2,6 +2,39 @@
 
 每个版本对应一个 git tag 和一篇文章。数字来自 `tools/` 下的脚本或 `tests/` 里的测试，可以自己复现。
 
+## v3 · 含水层与流体
+
+文章：[docs/articles/v3-含水层与流体.md](docs/articles/v3-含水层与流体.md) · 日志：[docs/notes/v3-notes.md](docs/notes/v3-notes.md)
+
+**新增**
+
+- 含水层（`terrain/worldgen/aquifer/Aquifer.ts`）：逐行移植原版 `NoiseBasedAquifer`、全局流体（y < -54 岩浆）、预估地表高度；按 noise_settings 的 `aquifers_enabled` / `default_fluid` 开关
+- 流体状态：水、岩浆各有源 / 流动（量 1~7）/ 下落 9 种状态；新方块：岩浆、黑曜石（含纹理）
+- 流体流动（`terrain/fluid/FluidTicker.ts`）：原版计划刻、getNewLiquid、往最近的坑流、无限水、岩浆遇水变黑曜石 / 圆石 / 石头；区块加载后更新含水层边上的流体
+- 流体渲染：原版角高度（加权平均）；平的流体面才合并；岩浆不透明
+- 玩家：流体高度按液面算，水流推人，岩浆里的移动，水下 / 岩浆里的雾
+- 物品栏第 8、9 格改为水和岩浆
+- `tools/aquifer-probe.ts`：列出地下湖的坐标，用来和游戏本体核对
+- `tests/fluid.test.ts`
+
+**改动**
+
+- 顶点坐标精度从 1/16 格改为 1/256 格（`POSITION_SCALE = 256`）
+- 方块改动不再立刻重建网格，而是标记 section，每帧统一重建
+- v0 以来“地表以上、海平面以下填水”的临时规则去掉，改由含水层决定
+- `MoveWorld.isWater` 改为 `block`，移动代码自己查流体状态
+
+**修复**
+
+- 主线程重建 section 时邻居区块还没加载，边界上会多出一层面；邻居加载后重建（`staleSections`）
+
+**数据**：原版主世界每个区块生成约 83 ms → 约 102 ms（含水层）
+
+**已知问题**
+
+- 洞穴没有光照（v6）；岩浆不发光
+- 含水层还没有和游戏本体逐点核对（可以用 `tools/aquifer-probe.ts` 给出的坐标核对）
+
 ## v2 · 20 TPS 原版物理与手感
 
 文章：[docs/articles/v2-原版物理与手感.md](docs/articles/v2-原版物理与手感.md) · 日志：[docs/notes/v2-notes.md](docs/notes/v2-notes.md)

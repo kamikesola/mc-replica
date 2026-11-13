@@ -221,7 +221,17 @@ export interface NoiseSettingsInfo {
   cellHeight: number
   seaLevel: number
   legacyRandomSource: boolean
+  /** 含水层开关（主世界、放大化开；下界、末地、洞穴等关） */
+  aquifersEnabled: boolean
+  /** 海平面以下的默认流体：主世界水，下界岩浆，末地空气 */
+  defaultFluid: 'water' | 'lava' | 'air'
   router: Partial<Record<RouterField, DensityFunction>>
+}
+
+function fluidName(name: string | undefined): 'water' | 'lava' | 'air' {
+  if (name === undefined) return 'water'
+  const n = normalizeId(name)
+  return n === 'minecraft:lava' ? 'lava' : n === 'minecraft:water' ? 'water' : 'air'
 }
 
 export function parseNoiseSettings(parser: DensityFunctionParser, id: string): NoiseSettingsInfo {
@@ -240,6 +250,8 @@ export function parseNoiseSettings(parser: DensityFunctionParser, id: string): N
     cellHeight: (noise.size_vertical ?? 2) * 4,
     seaLevel: typeof json.sea_level === 'number' ? json.sea_level : 63,
     legacyRandomSource: json.legacy_random_source === true,
+    aquifersEnabled: json.aquifers_enabled === true,
+    defaultFluid: fluidName((json.default_fluid as { Name?: string } | undefined)?.Name),
     router
   }
 }

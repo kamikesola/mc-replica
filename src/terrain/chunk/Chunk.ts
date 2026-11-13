@@ -16,6 +16,11 @@ export default class Chunk {
   sections: Section[]
   meshes: (THREE.Mesh | null)[]
   waterMeshes: (THREE.Mesh | null)[]
+  /**
+   * 在主线程重建时，旁边有区块还没加载（当成空气算的）的 section。
+   * 那个区块加载后要再重建一次，否则边界上会多出一层本该被挡住的面。
+   */
+  staleSections = new Set<number>()
 
   constructor(
     readonly cx: number,

@@ -1,4 +1,4 @@
-import { BlockType, FACE_TEXTURES, SOLID } from '../blocks'
+import { FACE_TEXTURES, FLUID_KIND, FLUIDS, FluidKind, SOLID } from '../blocks'
 import { TEXTURE_LAYER } from '../textures/painters'
 
 /**
@@ -21,6 +21,10 @@ import { TEXTURE_LAYER } from '../textures/painters'
  *   - 其他情况（墙角的单个暗角）保持 1×1，否则阴影会被拉伸变形
  * 纹理靠 GPU 的“重复平铺”铺满大矩形（见 materials.ts），所以合并后看起来和原来一模一样。
  *
+ * 流体（v3）：水和岩浆的表面不是平的。每个角的高度按原版 LiquidBlockRenderer 的规则，
+ * 由这一格和周围三格的“液面高度”加权平均得到（见 fluidHeights）。只有完全水平的流体面才合并。
+ * 水画在半透明的 water 网格里，岩浆不透明，画在 opaque 网格里。
+ *
  * 这个文件既在 Worker 里用（第一次生成），也在主线程里用（挖 / 放方块后重建），不依赖 three 和 DOM。
  */
 
@@ -32,7 +36,7 @@ export const nIndex = (x: number, y: number, z: number) => ((y + 1) * N + (z + 1
 
 /**
  * 一个 section 的网格数据。为了省显存，每个顶点只有 10 个字节：
- *   positions  Uint16 ×3   section 内的坐标 × 16（水面要放在 14/16 高度，所以不能只用整数格）
+ *   positions  Uint16 ×3   section 内的坐标 × 256（流体表面的高度不是整数格，1/256 格的精度足够）
  *   info       Uint8  ×4   [面的方向 0..5, 纹理层号, AO 等级 0..3, 未用]
  * 纹理坐标、明暗都在着色器里根据这两项算出来（见 materials.ts）。
  * v0 每个顶点是 6 个 float（位置 + 颜色）= 24 字节。
@@ -44,7 +48,7 @@ export interface SectionMesh {
 }
 
 /** 坐标放大倍数：存进 Uint16 之前乘 16 */
-export const POSITION_SCALE = 16
+export const POSITION_SCALE = 256
 
 /** 6 个面的方向：-x, +x, -y, +y, -z, +z。axis = 法线所在的轴，sign = 正方向还是负方向 */
 export const FACE_DIRS: readonly [number, number, number][] = [
@@ -59,7 +63,7 @@ export const FACE_DIRS: readonly [number, number, number][] = [
 // mask 里的标记位：这个面可以往哪个方向合并
 const MERGE_U = 1 << 16 // AO 只沿 v 方向变化（ao0 = ao1 且 ao2 = ao3），可以沿 u 方向拉长
 const MERGE_V = 1 << 17 // AO 只沿 u 方向变化（ao0 = ao2 且 ao1 = ao3），可以沿 v 方向拉长
-const WATER_LAYER = TEXTURE_LAYER.water
+const FLUID_LAYER = [0, TEXTURE_LAYER.water, TEXTURE_LAYER.lava]
 
 /** 可增长的输出缓冲 */
 class Builder {
@@ -124,7 +128,11 @@ export function meshSection(blocks: Uint8Array, opts: MeshOptions = {}): { opaqu
   const opaque = new Builder()
   const water = new Builder()
   const maskO = new Int32Array(256)
-  const maskW = new Int32Array(256)
+  /** 流体面的 mask：key 编码了流体种类和 4 个角的高度（数字可能超过 32 位，用 Float64） */
+  const maskF = new Float64Array(256)
+  /** 每个格子 4 个角的高度（NW, NE, SW, SE），输出时用 */
+  const heightsF = new Float32Array(256 * 4)
+  const hood = blocks
   const solid = (x: number, y: number, z: number) => SOLID[blocks[nIndex(x, y, z)]]
   const p = [0, 0, 0]
   const q = [0, 0, 0]
@@ -148,7 +156,7 @@ export function meshSection(blocks: Uint8Array, opts: MeshOptions = {}): { opaqu
           const nb = blocks[nIndex(p[0] + n[0], p[1] + n[1], p[2] + n[2])]
           const m = j * 16 + i
           maskO[m] = 0
-          maskW[m] = 0
+          maskF[m] = 0
           if (SOLID[b]) {
             if (SOLID[nb]) continue // 被挡住，不画
             // 四个角的 AO：看面外侧那一层里，角旁边的两个方块和斜对角的一个方块
@@ -176,10 +184,19 @@ export function meshSection(blocks: Uint8Array, opts: MeshOptions = {}): { opaqu
             const flags = (a0 === a1 && a2 === a3 ? MERGE_U : 0) | (a0 === a2 && a1 === a3 ? MERGE_V : 0)
             maskO[m] = FACE_TEXTURES[b * 6 + face] | (packed << 8) | flags
             any = true
-          } else if (b === BlockType.water && nb === BlockType.air) {
-            // 水：只在挨着空气的地方画。上面不是水的话，水面压低到 14/16（原版水面也比方块矮一截）
-            const above = blocks[nIndex(p[0], p[1] + 1, p[2])]
-            maskW[m] = 1 | (above === BlockType.water ? 0 : 2)
+          } else if (FLUID_KIND[b] !== FluidKind.none) {
+            // 流体：挨着同一种流体不画；侧面和底面挨着实心方块也不画；顶面只要上面不是同种流体就画
+            const kind = FLUID_KIND[b]
+            if (FLUID_KIND[nb] === kind) continue
+            if (face !== 3 && SOLID[nb]) continue
+            const hs = fluidHeights(hood, p[0], p[1], p[2], kind)
+            heightsF.set(hs, m * 4)
+            // 哪几个角决定这个面的形状：顶面 4 个角；侧面是靠这一侧的 2 个角；底面是平的
+            const edge = face === 3 ? hs : face === 2 ? null : face === 0 ? [hs[0], hs[2]] : face === 1 ? [hs[1], hs[3]] : face === 4 ? [hs[0], hs[1]] : [hs[2], hs[3]]
+            const flat = !edge || edge.every((h) => h === edge[0])
+            let key = kind
+            for (const h of edge ?? []) key = key * 257 + Math.round(h * POSITION_SCALE)
+            maskF[m] = key * 2 + (flat ? 1 : 0)
             any = true
           }
         }
@@ -187,10 +204,7 @@ export function meshSection(blocks: Uint8Array, opts: MeshOptions = {}): { opaqu
       if (!any) continue
 
       // ---- 2. 在 mask 里找矩形
-      for (const [mask, out] of [
-        [maskO, opaque],
-        [maskW, water]
-      ] as const) {
+      for (const mask of [maskO, maskF]) {
         for (let j = 0; j < 16; j++) {
           for (let i = 0; i < 16; ) {
             const key = mask[j * 16 + i]
@@ -198,9 +212,10 @@ export function meshSection(blocks: Uint8Array, opts: MeshOptions = {}): { opaqu
               i++
               continue
             }
-            const isWater = mask === maskW
-            const mergeU = greedy && (isWater || (key & MERGE_U) !== 0)
-            const mergeV = greedy && (isWater || (key & MERGE_V) !== 0)
+            const isFluid = mask === maskF
+            // 流体：只有平的面能合并（两个方向都行）；方块：看 AO 的合并标记
+            const mergeU = greedy && (isFluid ? key % 2 === 1 : (key & MERGE_U) !== 0)
+            const mergeV = greedy && (isFluid ? key % 2 === 1 : (key & MERGE_V) !== 0)
             let w = 1
             let h = 1
             if (mergeU) while (i + w < 16 && mask[j * 16 + i + w] === key) w++
@@ -210,7 +225,8 @@ export function meshSection(blocks: Uint8Array, opts: MeshOptions = {}): { opaqu
                 h++
               }
             }
-            emit(out, mask === maskW, key, face, axis, u, v, positive, k, i, j, w, h)
+            if (isFluid) emitFluid(opaque, water, blocks, heightsF.subarray((j * 16 + i) * 4, (j * 16 + i) * 4 + 4), face, axis, u, v, positive, k, i, j, w, h)
+            else emit(opaque, key, face, axis, u, v, positive, k, i, j, w, h)
             for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) mask[(j + y) * 16 + i + x] = 0
             i += w
           }
@@ -221,11 +237,40 @@ export function meshSection(blocks: Uint8Array, opts: MeshOptions = {}): { opaqu
   return { opaque: opaque.build(), water: water.build() }
 }
 
-/** 输出一个 w×h 的矩形 */
-function emit(
-  out: Builder,
-  isWater: boolean,
-  key: number,
+/** 矩形的 4 个角（x,y,z ×4，已乘 POSITION_SCALE），顺序 (u-,v-) (u+,v-) (u-,v+) (u+,v+) */
+function rectCorners(axis: number, u: number, v: number, positive: boolean, k: number, i: number, j: number, w: number, h: number): number[] {
+  const S = POSITION_SCALE
+  const corners: number[] = []
+  for (let c = 0; c < 4; c++) {
+    const pt = [0, 0, 0]
+    pt[axis] = (k + (positive ? 1 : 0)) * S
+    pt[u] = (i + (c & 1 ? w : 0)) * S
+    pt[v] = (j + (c & 2 ? h : 0)) * S
+    corners.push(pt[0], pt[1], pt[2])
+  }
+  return corners
+}
+
+/** 输出一个 w×h 的方块面矩形 */
+function emit(out: Builder, key: number, face: number, axis: number, u: number, v: number, positive: boolean, k: number, i: number, j: number, w: number, h: number): void {
+  const corners = rectCorners(axis, u, v, positive, k, i, j, w, h)
+  const layer = key & 0xff
+  const ao = [0, 1, 2, 3].map((c) => (key >> (8 + c * 2)) & 3)
+  // 沿“两端更亮”的那条对角线切：单个暗角时，阴影只留在角落的那个三角形里，不会拉成一条斜线
+  const flip = ao[0] + ao[3] > ao[1] + ao[2]
+  out.quad(corners, face, layer, ao, positive, flip)
+}
+
+/**
+ * 输出一个流体面。先当成完整方块的面算出 4 个角，再把“上边”的角按液面高度往下压：
+ * 顶面 4 个角都压；侧面只压上边两个角；底面不动。
+ * hs 是矩形第一个格子的 4 个角高度（NW, NE, SW, SE）；能合并的流体面都是平的，所以用哪一格的都一样。
+ */
+function emitFluid(
+  opaque: Builder,
+  water: Builder,
+  blocks: Uint8Array,
+  hs: Float32Array,
   face: number,
   axis: number,
   u: number,
@@ -238,29 +283,68 @@ function emit(
   h: number
 ): void {
   const S = POSITION_SCALE
-  const corners: number[] = []
-  for (let c = 0; c < 4; c++) {
-    const pt = [0, 0, 0]
-    pt[axis] = (k + (positive ? 1 : 0)) * S
-    pt[u] = (i + (c & 1 ? w : 0)) * S
-    pt[v] = (j + (c & 2 ? h : 0)) * S
-    corners.push(pt[0], pt[1], pt[2])
-  }
-
-  if (isWater) {
-    const lowered = (key & 2) !== 0
-    if (lowered && face !== 2) {
-      // 顶面整体压低；侧面只压低上边那两个角
-      const top = Math.max(corners[1], corners[4], corners[7], corners[10])
-      for (let c = 0; c < 4; c++) if (corners[c * 3 + 1] === top) corners[c * 3 + 1] -= 2
+  const p = [0, 0, 0]
+  p[axis] = k
+  p[u] = i
+  p[v] = j
+  const kind = FLUID_KIND[blocks[nIndex(p[0], p[1], p[2])]]
+  const corners = rectCorners(axis, u, v, positive, k, i, j, w, h)
+  if (face !== 2) {
+    const top = Math.max(corners[1], corners[4], corners[7], corners[10])
+    for (let c = 0; c < 4; c++) {
+      if (corners[c * 3 + 1] !== top) continue
+      const east = corners[c * 3] > p[0] * S ? 1 : 0
+      const south = corners[c * 3 + 2] > p[2] * S ? 2 : 0
+      corners[c * 3 + 1] -= Math.round((1 - hs[east + south]) * S)
     }
-    out.quad(corners, face, WATER_LAYER, [3, 3, 3, 3], positive, false)
-    return
   }
+  // 水半透明，单独一个网格；岩浆不透明，和方块放在一起
+  const out = kind === FluidKind.water ? water : opaque
+  out.quad(corners, face, FLUID_LAYER[kind], [3, 3, 3, 3], positive, false)
+}
 
-  const layer = key & 0xff
-  const ao = [0, 1, 2, 3].map((c) => (key >> (8 + c * 2)) & 3)
-  // 沿“两端更亮”的那条对角线切：单个暗角时，阴影只留在角落的那个三角形里，不会拉成一条斜线
-  const flip = ao[0] + ao[3] > ao[1] + ao[2]
-  out.quad(corners, face, layer, ao, positive, flip)
+/**
+ * 流体表面 4 个角的高度（NW, NE, SW, SE），移植自原版 LiquidBlockRenderer：
+ *
+ *   一格的液面高度：上面也是同种流体 → 1；否则 = 量 / 9（源是 8/9，流动的越远越低）
+ *                   不是这种流体：空的 → 0，实心 → -1（不参与平均）
+ *   一个角的高度 = 这一格、两个相邻格、对角那一格的加权平均，高度 ≥ 0.8 的权重是 10
+ *   （所以挨着源的角基本和源一样高），相邻格上面有流体时这个角直接是 1
+ */
+export function fluidHeights(hood: Uint8Array, x: number, y: number, z: number, kind: number): [number, number, number, number] {
+  const H = (x: number, y: number, z: number): number => {
+    const b = hood[nIndex(x, y, z)]
+    if (FLUID_KIND[b] === kind) return FLUID_KIND[hood[nIndex(x, y + 1, z)]] === kind ? 1 : FLUIDS[b].amount / 9
+    return SOLID[b] ? -1 : 0
+  }
+  const f = H(x, y, z)
+  if (f >= 1) return [1, 1, 1, 1]
+  const north = H(x, y, z - 1)
+  const south = H(x, y, z + 1)
+  const east = H(x + 1, y, z)
+  const west = H(x - 1, y, z)
+  const avg = (g: number, h: number, dx: number, dz: number): number => {
+    if (h >= 1 || g >= 1) return 1
+    let sum = 0
+    let weight = 0
+    const add = (v: number) => {
+      if (v >= 0.8) {
+        sum += v * 10
+        weight += 10
+      } else if (v >= 0) {
+        sum += v
+        weight += 1
+      }
+    }
+    if (h > 0 || g > 0) {
+      const d = H(x + dx, y, z + dz)
+      if (d >= 1) return 1
+      add(d)
+    }
+    add(f)
+    add(h)
+    add(g)
+    return sum / weight
+  }
+  return [avg(north, west, -1, -1), avg(north, east, 1, -1), avg(south, west, -1, 1), avg(south, east, 1, 1)]
 }

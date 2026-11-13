@@ -1,11 +1,12 @@
 import Player, { PHYSICS as P, POSES } from '../player'
+import { FLUIDS, FluidKind, SOLID } from '../terrain/blocks'
 import { AABB, backOffFromEdge, collide, collides, noCollision, type ShapeFn, type Vec3 } from './physics'
 
 /**
  * 玩家的一个 tick（1/20 秒）。按原版的顺序和公式写，出处标在每一段上：
  *
  *   tickPlayer
- *     1. 更新水的状态         Entity.updateInWaterStateAndDoFluidPushing
+ *     1. 水 / 岩浆：泡多深、水流推人   Entity.updateInWaterStateAndDoFluidPushing
  *     2. 姿势（站 / 蹲）      Player.updatePlayerPose
  *     3. 疾跑开始 / 结束      LocalPlayer.aiStep
  *     4. 输入：潜行 ×0.3      LocalPlayer.aiStep
@@ -32,7 +33,8 @@ export interface MoveInput {
 export interface MoveWorld {
   /** 方块的碰撞形状（没加载的区块当作实心） */
   shape: ShapeFn
-  isWater: (x: number, y: number, z: number) => boolean
+  /** 方块 ID（流体的种类、量、水流方向都从这里查） */
+  block: (x: number, y: number, z: number) => number
 }
 
 const f32 = Math.fround
@@ -42,8 +44,8 @@ export function tickPlayer(p: Player, input: MoveInput, world: MoveWorld): void 
   p.prevWalkDist = p.walkDist
   p.prevBob = p.bob
 
-  // ---- 1. 水
-  updateWater(p, world)
+  // ---- 1. 水、岩浆：泡多深，流动的水推人
+  updateFluids(p, world)
 
   // ---- 2. 姿势：按着 Shift（且没在飞）就蹲下；站不起来（头顶只有 1.5 格）也保持蹲着
   const wantCrouch = input.sneak && !p.flying
@@ -81,17 +83,19 @@ export function tickPlayer(p: Player, input: MoveInput, world: MoveWorld): void 
   if (Math.abs(v.z) < P.MIN_VELOCITY) v.z = 0
 
   if (input.jump && !p.flying) {
-    const k = p.waterHeight
+    const k = p.inLava ? p.lavaHeight : p.waterHeight
     const inWater = p.inWater && k > 0
-    if (!inWater || (p.onGround && k <= P.WATER_JUMP_THRESHOLD)) {
-      // 在陆地上，或者在很浅的水里站着：正常起跳
-      if (p.onGround && p.noJumpDelay === 0) {
-        jumpFromGround(p, input.yaw)
-        p.noJumpDelay = P.JUMP_DELAY
-      }
+    const l = P.WATER_JUMP_THRESHOLD
+    if (!inWater || (p.onGround && k <= l)) {
+      if (!p.inLava || (p.onGround && k <= l)) {
+        // 在陆地上，或者在很浅的水 / 岩浆里站着：正常起跳
+        if ((p.onGround || (inWater && k <= l)) && p.noJumpDelay === 0) {
+          jumpFromGround(p, input.yaw)
+          p.noJumpDelay = P.JUMP_DELAY
+        }
+      } else v.y += P.WATER_JUMP // 在岩浆里往上游
     } else {
-      // 在水里：往上游
-      v.y += P.WATER_JUMP
+      v.y += P.WATER_JUMP // 在水里往上游
     }
   } else p.noJumpDelay = 0
 
@@ -102,6 +106,15 @@ export function tickPlayer(p: Player, input: MoveInput, world: MoveWorld): void 
   // ---- 8. 视角摇晃的幅度：在地上走得越快摇得越厉害，最多 0.1
   const target = p.onGround && !p.flying ? Math.min(0.1, Math.hypot(v.x, v.z)) : 0
   p.bob += (target - p.bob) * 0.4
+}
+
+/** 在水 / 岩浆里游向一格高的岸边：抬高 0.6 格后前面是空的，就往上蹿（0.3 格/tick） */
+function climbOut(p: Player, y0: number, world: MoveWorld): void {
+  if (!p.horizontalCollision) return
+  const v = p.velocity
+  const b = p.body
+  const bb = AABB.body(p.pos, b.width, b.height).move(v.x, v.y + 0.6 - p.pos.y + y0, v.z)
+  if (noCollision(bb, world.shape)) v.y = 0.3
 }
 
 /** 起跳：竖直速度设为 0.42；疾跑时再朝面向的方向推 0.2（所以疾跑跳特别远） */
@@ -144,11 +157,27 @@ function travel(p: Player, left: number, forward: number, input: MoveInput, worl
     v.z *= drag
     v.y -= P.GRAVITY / 16 // 水里的重力只有 1/16，慢慢下沉
     // 游向一格高的岸边：抬高 0.6 格后前面是空的，就往上蹿（0.3 格/tick）
-    if (p.horizontalCollision) {
-      const b = p.body
-      const bb = AABB.body(p.pos, b.width, b.height).move(v.x, v.y + 0.6 - p.pos.y + y0, v.z)
-      if (noCollision(bb, world.shape)) v.y = 0.3
+    climbOut(p, y0, world)
+    return
+  }
+
+  if (p.inLava && !p.flying) {
+    // ---- 岩浆里（LivingEntity.travel 的岩浆分支）：阻力很大，重力 1/4
+    const y0 = p.pos.y
+    moveRelative(p, P.WATER_SPEED, left, forward, input.yaw)
+    move(p, input, world)
+    if (p.lavaHeight <= P.WATER_JUMP_THRESHOLD) {
+      v.x *= 0.5
+      v.y *= 0.8
+      v.z *= 0.5
+      v.y -= P.GRAVITY / 16
+    } else {
+      v.x *= 0.5
+      v.y *= 0.5
+      v.z *= 0.5
     }
+    v.y -= P.GRAVITY / 4
+    climbOut(p, y0, world)
     return
   }
 
@@ -200,27 +229,118 @@ function move(p: Player, input: MoveInput, world: MoveWorld): void {
   p.walkDist += Math.hypot(r.x, r.z) * 0.6
 }
 
+/** 一格流体的液面高度：上面也是同种流体 → 1，否则 量 / 9（源 8/9） */
+function fluidHeight(world: MoveWorld, x: number, y: number, z: number, kind: FluidKind): number {
+  const f = FLUIDS[world.block(x, y, z)]
+  if (f.kind !== kind) return 0
+  return FLUIDS[world.block(x, y + 1, z)].kind === kind ? 1 : f.amount / 9
+}
+
 /**
- * 水的状态（原版 updateFluidHeightAndDoFluidPushing）。
- * 碰撞箱稍微缩小一点，看它碰到的每个水方块：水面高度 = 方块 y + 水高
- * （上面还是水 → 1；否则 8/9），脚底泡在水里的深度取最大值。
+ * 水流的方向（原版 FlowingFluid.getFlow）：看四周液面比自己高还是低，从高往低流；
+ * 旁边是空的而下面有同种流体（瀑布边上），按“下面那格的高度 - 8/9”算。
+ * 下落的流体贴着墙时，方向再加上一个很大的向下分量。
  */
-function updateWater(p: Player, world: MoveWorld): void {
+function fluidFlow(world: MoveWorld, x: number, y: number, z: number, kind: FluidKind): Vec3 {
+  const self = FLUIDS[world.block(x, y, z)]
+  const own = self.amount / 9
+  let dx = 0
+  let dz = 0
+  for (const [sx, sz] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+    const b = world.block(x + sx, y, z + sz)
+    const f = FLUIDS[b]
+    if (f.kind !== FluidKind.none && f.kind !== kind) continue // 别的流体不影响
+    let h = f.kind === kind ? f.amount / 9 : 0
+    let g = 0
+    if (h === 0) {
+      if (!SOLID[b]) {
+        const below = FLUIDS[world.block(x + sx, y - 1, z + sz)]
+        if (below.kind === kind || below.kind === FluidKind.none) {
+          h = below.kind === kind ? below.amount / 9 : 0
+          if (h > 0) g = own - (h - 0.8888889)
+        }
+      }
+    } else if (h > 0) g = own - h
+    dx += sx * g
+    dz += sz * g
+  }
+  let dy = 0
+  if (self.falling) {
+    for (const [sx, sz] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+      if (SOLID[world.block(x + sx, y, z + sz)] || SOLID[world.block(x + sx, y + 1, z + sz)]) {
+        const len = Math.hypot(dx, dz)
+        if (len > 0) {
+          dx /= len
+          dz /= len
+        }
+        dy = -6
+        break
+      }
+    }
+  }
+  const len = Math.hypot(dx, dy, dz)
+  return len < 1e-4 ? { x: 0, y: 0, z: 0 } : { x: dx / len, y: dy / len, z: dz / len }
+}
+
+/**
+ * 水、岩浆的状态（原版 updateFluidHeightAndDoFluidPushing，先水后岩浆）。
+ * 碰撞箱稍微缩小一点，看它碰到的每个流体方块：
+ *   - 脚底泡在里面的深度取最大值
+ *   - 把每格的水流方向加起来取平均，乘一个很小的系数（水 0.014，岩浆 0.0023）加到速度上 → 被水冲着走
+ */
+function updateFluids(p: Player, world: MoveWorld): void {
   const b = p.body
   const bb = AABB.body(p.pos, b.width, b.height).deflate(0.001)
-  let depth = 0
-  for (let x = Math.floor(bb.minX); x < Math.ceil(bb.maxX); x++)
-    for (let y = Math.floor(bb.minY); y < Math.ceil(bb.maxY); y++)
-      for (let z = Math.floor(bb.minZ); z < Math.ceil(bb.maxZ); z++) {
-        if (!world.isWater(x, y, z)) continue
-        const top = y + (world.isWater(x, y + 1, z) ? 1 : 8 / 9)
-        if (top >= bb.minY) depth = Math.max(depth, top - bb.minY)
+  const pushed = !p.flying
+  for (const [kind, scale] of [
+    [FluidKind.water, 0.014],
+    [FluidKind.lava, 0.0023333333333333335]
+  ] as const) {
+    let depth = 0
+    let fx = 0
+    let fy = 0
+    let fz = 0
+    let n = 0
+    for (let x = Math.floor(bb.minX); x < Math.ceil(bb.maxX); x++)
+      for (let y = Math.floor(bb.minY); y < Math.ceil(bb.maxY); y++)
+        for (let z = Math.floor(bb.minZ); z < Math.ceil(bb.maxZ); z++) {
+          const h = fluidHeight(world, x, y, z, kind)
+          if (h === 0) continue
+          const top = y + h
+          if (top < bb.minY) continue
+          depth = Math.max(depth, top - bb.minY)
+          if (pushed) {
+            const f = fluidFlow(world, x, y, z, kind)
+            const k = depth < 0.4 ? depth : 1
+            fx += f.x * k
+            fy += f.y * k
+            fz += f.z * k
+            n++
+          }
+        }
+    if (n > 0 && Math.hypot(fx, fy, fz) > 0) {
+      fx = (fx / n) * scale
+      fy = (fy / n) * scale
+      fz = (fz / n) * scale
+      const v = p.velocity
+      const len = Math.hypot(fx, fy, fz)
+      if (Math.abs(v.x) < 0.003 && Math.abs(v.z) < 0.003 && len < 0.0045) {
+        fx = (fx / len) * 0.0045
+        fy = (fy / len) * 0.0045
+        fz = (fz / len) * 0.0045
       }
-  p.waterHeight = depth
-  // 眼睛在不在水下
+      v.x += fx
+      v.y += fy
+      v.z += fz
+    }
+    if (kind === FluidKind.water) p.waterHeight = depth
+    else p.lavaHeight = depth
+  }
+  // 眼睛在不在水下 / 岩浆里
   const eye = p.pos.y + b.eye
   const ex = Math.floor(p.pos.x)
   const ey = Math.floor(eye)
   const ez = Math.floor(p.pos.z)
-  p.underWater = world.isWater(ex, ey, ez) && eye < ey + (world.isWater(ex, ey + 1, ez) ? 1 : 8 / 9)
+  p.underWater = eye < ey + fluidHeight(world, ex, ey, ez, FluidKind.water)
+  p.underLava = eye < ey + fluidHeight(world, ex, ey, ez, FluidKind.lava)
 }

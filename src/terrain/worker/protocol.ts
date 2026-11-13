@@ -27,6 +27,8 @@ export interface ChunkData {
   sections: PalettedData[]
   /** 每个 section 的网格；整段没有面时为 null */
   meshes: SectionMeshes[]
+  /** 区块加载后要马上更新一次的流体（区块内编号，见 Chunk.index），让含水层边上的水流进洞里 */
+  fluidUpdates: Int32Array
   ms: number
 }
 

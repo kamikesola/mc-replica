@@ -78,8 +78,11 @@ export default class Player {
 
   /** 脚底泡在水里多深（格），0 = 没碰到水 */
   waterHeight = 0
-  /** 眼睛在不在水里 */
+  /** 脚底泡在岩浆里多深 */
+  lavaHeight = 0
+  /** 眼睛在不在水里 / 岩浆里 */
   underWater = false
+  underLava = false
 
   /** 走过的距离（视角摇晃用），以及摇晃幅度 bob（原版 Player.bob） */
   walkDist = 0
@@ -95,6 +98,10 @@ export default class Player {
     return this.waterHeight > 0
   }
 
+  get inLava() {
+    return this.lavaHeight > 0
+  }
+
   /** 当前移动速度属性：疾跑时 0.13 */
   get speedAttribute() {
     return PHYSICS.WALK_SPEED * (this.sprinting ? PHYSICS.SPRINT_MULTIPLIER : 1)
@@ -105,6 +112,7 @@ export default class Player {
     if (this.flying) return this.sprinting ? '飞行（疾跑）' : '飞行'
     const parts: string[] = []
     if (this.inWater) parts.push(this.underWater ? '水下' : '水中')
+    if (this.inLava) parts.push('岩浆中')
     if (this.pose === 'crouching') parts.push('潜行')
     else if (this.sprinting) parts.push('疾跑')
     else parts.push('行走')

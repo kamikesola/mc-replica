@@ -53,12 +53,43 @@ export default class Core {
     })
   }
 
+  private viewBlocks = 96
+  private medium: 'air' | 'water' | 'lava' = 'air'
+
   /** 视距变了，雾也跟着变：在最后一圈区块处完全变成天空色 */
   setFogDistance = (blocks: number) => {
-    const fog = this.scene.fog as THREE.Fog
-    fog.near = blocks * 0.6
-    fog.far = blocks
+    this.viewBlocks = blocks
     this.camera.far = blocks + 64
     this.camera.updateProjectionMatrix()
+    this.applyFog()
+  }
+
+  /**
+   * 眼睛在空气 / 水 / 岩浆里，雾不一样（原版 FogRenderer）：
+   * 水下是深蓝色、能看几十格；岩浆里是橙红色、几乎什么都看不见
+   */
+  setMedium = (medium: 'air' | 'water' | 'lava') => {
+    if (medium === this.medium) return
+    this.medium = medium
+    this.applyFog()
+  }
+
+  private applyFog() {
+    const fog = this.scene.fog as THREE.Fog
+    const bg = this.scene.background as THREE.Color
+    if (this.medium === 'water') {
+      fog.color.setHex(0x1f3f8f)
+      fog.near = 2
+      fog.far = Math.min(48, this.viewBlocks)
+    } else if (this.medium === 'lava') {
+      fog.color.setHex(0x991a00)
+      fog.near = 0.25
+      fog.far = 1.5
+    } else {
+      fog.color.setHex(Core.SKY)
+      fog.near = this.viewBlocks * 0.6
+      fog.far = this.viewBlocks
+    }
+    bg.copy(fog.color)
   }
 }

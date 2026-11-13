@@ -1,4 +1,4 @@
-# 架构说明（v2）
+# 架构说明（v3）
 
 ## 整体：和原项目一样，一个模块一个类
 
@@ -33,7 +33,7 @@ terrain.init(seed, settings)                          // 让 Worker 换种子
    ▼
  generate.ts → generateChunk()            terrain/worker/surface.ts
    │ 1. NoiseChunk 算 final_density       ← terrain/worldgen（v0 的核心成果）
-   │    > 0 石头，≤ 0 空气
+   │    > 0 石头；≤ 0 交给含水层：空气 / 水 / 岩浆 / 石头墙（v3）
    │ 2. 临时地表规则：草 / 土 / 沙 / 水 / 深板岩 / 基岩
    │ 3. 每 16 层切一个 section：
    │    PalettedContainer.fromValues()    ← terrain/chunk（调色板 + 位压缩）
@@ -88,6 +88,7 @@ Chunk（16×16×384）
 | | `mesh/materials.ts` | 纹理数组 ShaderMaterial：不透明 / 水 / 线框 |
 | | `textures/painters.ts` | 用代码画 16 张纹理 |
 | | `textures/index.ts` | 纹理数组 |
+| | `fluid/FluidTicker.ts` | 流体流动：计划刻、getNewLiquid、spread、岩浆遇水 |
 | | `highlight/` | 选中方块的线框 |
 | | `worker/generate.ts` | Worker 入口：init / chunk / f3 / slice 四个方法 |
 | | `worker/surface.ts` | 密度 → 方块（临时地表规则）→ section 压缩 + 网格 |
@@ -110,6 +111,7 @@ Chunk（16×16×384）
 | `random/` | `LegacyRandomSource`（= java.util.Random）、`XoroshiroRandomSource`、位置随机工厂 |
 | `noise/` | `ImprovedNoise` → `PerlinNoise` → `NormalNoise`，`BlendedNoise`，`SimplexNoise` |
 | `registry/` | 数据包注册表：文件路径 → 资源 ID |
+| `aquifer/` | 含水层：格子中心点、水位、压力墙、全局流体、预估地表高度 |
 | `density/` | 密度函数的各种类型、JSON 解析、样条（float）、`RandomState`、`NoiseChunk`、`PointCache` |
 | `Worldgen.ts` | 总入口 |
 
@@ -132,4 +134,5 @@ Chunk（16×16×384）
 | `tests/vanilla.test.ts` | 原版数据（没有就跳过） |
 | `tests/game.test.ts` | 射线、碰撞、区块生成 |
 | `tests/chunk.test.ts` | 位压缩、调色板、贪婪网格、纹理 |
+| `tests/fluid.test.ts` | 流体流动规则、流体表面高度、含水层（原版数据） |
 | `tests/movement.test.ts` | 移动速度、跳跃、飞行、潜行、抬步、碰撞、游泳，对照原版数值 |

@@ -244,6 +244,22 @@ function glowstone(c: Canvas, r: () => number) {
   })
 }
 
+function lava(c: Canvas, r: () => number) {
+  // 橙红色底，加上几道亮黄色的“流纹”；和水一样用 sin 保证能无缝拼接
+  c.fill((x, y) => {
+    const w = Math.sin(((x + y) / TEX) * Math.PI * 4) * 0.5 + Math.sin(((x * 2 - y) / TEX) * Math.PI * 2) * 0.5
+    const t = Math.max(0, Math.min(1, 0.5 + w * 0.6 + (r() - 0.5) * 0.25))
+    return mix(hex(0xc8400f), hex(0xffc23a), t * t)
+  })
+  blotches(c, () => hex(0x9a2a08), 6, 3, r)
+}
+
+function obsidian(c: Canvas, r: () => number) {
+  speckle(c, hex(0x1b1426), 0.12, r)
+  blotches(c, () => hex(0x3b2a5a), 10, 3, r)
+  blotches(c, () => hex(0x0c0912), 8, 2, r)
+}
+
 /**
  * 全部纹理，顺序就是纹理数组的层号（layer）。
  * 0 号留空不用：网格里用 0 表示“这里没有面”。
@@ -264,7 +280,9 @@ export const PAINTERS = {
   log,
   log_top: logTop,
   leaves,
-  glowstone
+  glowstone,
+  lava,
+  obsidian
 } satisfies Record<string, (c: Canvas, r: () => number) => void>
 
 export type TextureName = keyof typeof PAINTERS

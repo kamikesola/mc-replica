@@ -11,6 +11,16 @@ import { RandomState } from './density/RandomState'
 import { parseWorldSeed } from './math/Mth'
 import { normalizeId, Registry } from './registry/Registry'
 import { type FunctionKey, parseKey } from './FunctionKey'
+import {
+  type Aquifer,
+  chunkLocal,
+  createFluidPicker,
+  disabledAquifer,
+  Fluid,
+  NoiseBasedAquifer,
+  preliminarySurfaceSampler
+} from './aquifer/Aquifer'
+import type { PositionalRandomFactory } from './random/RandomSource'
 
 /**
  * 世界生成的“总入口”。把四个步骤串起来，外部只需要和这一个类打交道：
@@ -38,6 +48,9 @@ export class Worldgen {
   private wiredRouter = new Map<string, DensityFunction>()
   /** sampler() 用的“带单点缓存”的版本，换种子时清空 */
   private cachedSamplers = new Map<string, DensityFunction>()
+  /** 预估地表高度的缓存（每个 noise_settings 一张），换种子时清空 */
+  private surfaceCaches = new Map<string, Map<number, number>>()
+  private aquiferRandom: PositionalRandomFactory | null = null
 
   constructor(packs: PackInput[] = []) {
     for (const p of packs) this.addPack(p)
@@ -91,11 +104,59 @@ export class Worldgen {
     this.state = new RandomState(this.parser, value)
     this.wiredRouter.clear()
     this.cachedSamplers.clear()
+    this.surfaceCaches.clear()
+    this.aquiferRandom = null
     return value
   }
 
   get seed(): bigint {
     return this.randomState.seed
+  }
+
+  /**
+   * 某个区块的含水层（见 aquifer/Aquifer.ts）。noise_settings 关了含水层时，返回只用全局流体的版本。
+   * pad：区块四周多覆盖几格（Worker 会多生成一圈方块，用来判断邻居）。
+   * 原版：aquiferRandom = random.fromHashOf("minecraft:aquifer").forkPositional()
+   */
+  aquifer(settingsId: string, chunkX: number, chunkZ: number, pad = 1): Aquifer {
+    const s = this.getSettings(settingsId)
+    const fluid = s.defaultFluid === 'lava' ? Fluid.lava : s.defaultFluid === 'water' ? Fluid.water : Fluid.air
+    const picker = createFluidPicker(s.seaLevel, fluid)
+    const r = s.router
+    if (!s.aquifersEnabled || !r.barrier || !r.erosion || !r.depth || !r.initial_density_without_jaggedness) return disabledAquifer(picker)
+
+    const id = normalizeId(settingsId)
+    let cache = this.surfaceCaches.get(id)
+    if (!cache || cache.size > 500_000) {
+      cache = new Map()
+      this.surfaceCaches.set(id, cache)
+    }
+    this.aquiferRandom ??= this.randomState.random.fromHashOf('minecraft:aquifer').forkPositional()
+    const sample = (field: RouterField) => this.sampler({ kind: 'router', settings: id, field })
+    const erosion = chunkLocal(this.router(id, 'erosion'), chunkX, chunkZ)
+    const depth = chunkLocal(this.router(id, 'depth'), chunkX, chunkZ)
+    return new NoiseBasedAquifer(
+      {
+        barrier: sample('barrier'),
+        floodedness: sample('fluid_level_floodedness'),
+        spread: sample('fluid_level_spread'),
+        lava: sample('lava'),
+        erosion: (c) => erosion.compute(c),
+        depth: (c) => depth.compute(c),
+        preliminarySurfaceLevel: preliminarySurfaceSampler(sample('initial_density_without_jaggedness'), s.minY, s.height, s.cellHeight, cache)
+      },
+      this.aquiferRandom,
+      picker,
+      // 区块本身，四周再多 pad 格（Worker 会多生成一圈用来判断邻居）
+      {
+        minX: chunkX * 16 - pad,
+        maxX: chunkX * 16 + 15 + pad,
+        minY: s.minY,
+        maxY: s.minY + s.height - 1,
+        minZ: chunkZ * 16 - pad,
+        maxZ: chunkZ * 16 + 15 + pad
+      }
+    )
   }
 
   get randomState(): RandomState {

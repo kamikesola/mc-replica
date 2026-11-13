@@ -1,7 +1,8 @@
 import * as THREE from 'three'
-import { BlockType, isSolid } from './blocks'
+import { BlockType, FLUID_KIND, FluidKind, isSolid } from './blocks'
 import Chunk, { CHUNK_SIZE } from './chunk/Chunk'
 import Section from './chunk/Section'
+import { FluidTicker } from './fluid/FluidTicker'
 import Highlight from './highlight'
 import Materials from './mesh/materials'
 import { meshSection, N, nIndex, POSITION_SCALE, type SectionMesh } from './mesh/mesher'
@@ -22,6 +23,8 @@ export { BlockType } from './blocks'
  * 玩家改过的方块记在 edits 里（相当于原项目的 customBlocks），区块卸载后再加载也不会丢。
  *
  * v1 的变化：区块按 16³ 的 section 存储和画。挖一个方块只重建它周围的 section，而不是整根区块。
+ * v3 的变化：水和岩浆会流动（fluid/FluidTicker.ts），由 tick() 每个游戏 tick 推进一次。
+ * 方块改动先只记下“哪些 section 要重建”，每帧统一重建一次（流体一个 tick 可能改几百格）。
  */
 export default class Terrain {
   scene: THREE.Scene
@@ -48,6 +51,13 @@ export default class Terrain {
   lastChunkMs = 0
   /** 最近一次主线程重建 section 网格的耗时 */
   lastRemeshMs = 0
+  /** 等待重建网格的 section（"cx,cz,sy"） */
+  private dirty = new Set<string>()
+  /** 流体流动（计划刻） */
+  fluids = new FluidTicker({
+    get: (x, y, z) => this.getBlock(x, y, z),
+    set: (x, y, z, b) => this.writeBlock(x, y, z, b)
+  })
 
   constructor(scene: THREE.Scene, camera: THREE.PerspectiveCamera) {
     this.scene = scene
@@ -58,6 +68,7 @@ export default class Terrain {
   /** 通知所有 Worker 换种子 / noise_settings，并清空现有区块 */
   async init(seed: string, settings: string): Promise<WorldInfo> {
     this.edits.clear()
+    this.fluids.clear()
     this.reload()
     this.info = await this.pool.broadcast('init', { seed, settings })
     return this.info
@@ -95,6 +106,7 @@ export default class Terrain {
 
   update = () => {
     if (!this.info) return
+    this.flushRemesh()
     const pcx = Math.floor(this.camera.position.x / CHUNK_SIZE)
     const pcz = Math.floor(this.camera.position.z / CHUNK_SIZE)
 
@@ -119,6 +131,11 @@ export default class Terrain {
     }
     wanted.sort((a, b) => a[0] - b[0])
     for (const [, cx, cz] of wanted.slice(0, maxInFlight - this.pool.busy)) this.load(cx, cz)
+  }
+
+  /** 一个游戏 tick（由 Control 的 20 TPS 循环调用）：推进流体 */
+  tick(): void {
+    this.fluids.tick()
   }
 
   private load(cx: number, cz: number): void {
@@ -164,6 +181,22 @@ export default class Terrain {
     } else {
       for (let sy = 0; sy < sections.length; sy++) this.setSectionMesh(chunk, sy, data.meshes[sy])
     }
+
+    // 旁边的区块里，有之前当成“这里是空气”重建过的 section：现在这里加载了，重新建一次
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+      const n = this.chunks.get(`${data.cx + dx},${data.cz + dz}`)
+      if (n) for (const sy of n.staleSections) this.dirty.add(`${n.cx},${n.cz},${sy}`)
+    }
+
+    // 含水层边上的水 / 岩浆：加载后马上更新一次，让它们流进旁边的洞里（原版的区块后处理）
+    for (const i of data.fluidUpdates) {
+      const x = data.cx * 16 + (i & 15)
+      const z = data.cz * 16 + ((i >> 4) & 15)
+      const y = (i >> 8) + chunk.minY
+      const b = chunk.get(i & 15, y, (i >> 4) & 15)
+      const kind = FLUID_KIND[b]
+      if (kind !== FluidKind.none) this.fluids.schedule(x, y, z, kind as FluidKind.water | FluidKind.lava, 1)
+    }
   }
 
   // ---------------------------------------------------------------- 方块读写
@@ -185,37 +218,53 @@ export default class Terrain {
     return b === null ? true : isSolid(b)
   }
 
+  /** 玩家挖 / 放方块：改方块，通知周围的流体，马上重建网格 */
   setBlock(x: number, y: number, z: number, type: BlockType): void {
+    if (!this.writeBlock(x, y, z, type)) return
+    this.fluids.blockChanged(x, y, z)
+    this.flushRemesh()
+  }
+
+  /**
+   * 改一个方块：写进 section、记进 edits、把受影响的 section 标记为待重建。
+   * 受影响的是方块本身所在的 section，加上它周围 3×3×3 范围碰到的
+   * （邻居的面要不要画、角上的 AO、流体表面的高度都可能因为这个方块改变，可能跨到相邻 section / 区块）
+   */
+  writeBlock(x: number, y: number, z: number, type: BlockType): boolean {
     const c = this.getChunk(x, z)
-    if (!c || !this.info) return
+    if (!c || !this.info) return false
     const lx = x - c.cx * CHUNK_SIZE
     const lz = z - c.cz * CHUNK_SIZE
-    if (y < this.info.minY || y >= this.info.minY + this.info.height) return
+    if (y < this.info.minY || y >= this.info.minY + this.info.height) return false
     c.set(lx, y, lz, type)
 
     const key = `${c.cx},${c.cz}`
     if (!this.edits.has(key)) this.edits.set(key, new Map())
     this.edits.get(key)!.set(Chunk.index(lx, y, lz, c.minY), type)
 
-    // 重建受影响的 section：方块本身所在的，加上它周围 3×3×3 范围碰到的
-    // （邻居的面要不要画、角上的 AO 都可能因为这个方块改变，可能跨到相邻 section / 区块）
-    const t0 = performance.now()
-    const done = new Set<string>()
     for (let dx = -1; dx <= 1; dx++) {
       for (let dy = -1; dy <= 1; dy++) {
         for (let dz = -1; dz <= 1; dz++) {
           const ny = y + dy
           if (ny < this.info.minY || ny >= this.info.minY + this.info.height) continue
           const nc = this.getChunk(x + dx, z + dz)
-          if (!nc) continue
-          const sy = nc.sectionIndex(ny)
-          const k = `${nc.cx},${nc.cz},${sy}`
-          if (done.has(k)) continue
-          done.add(k)
-          this.remeshSection(nc, sy)
+          if (nc) this.dirty.add(`${nc.cx},${nc.cz},${nc.sectionIndex(ny)}`)
         }
       }
     }
+    return true
+  }
+
+  /** 重建所有待重建的 section */
+  flushRemesh(): void {
+    if (this.dirty.size === 0) return
+    const t0 = performance.now()
+    for (const k of this.dirty) {
+      const [cx, cz, sy] = k.split(',').map(Number)
+      const c = this.chunks.get(`${cx},${cz}`)
+      if (c) this.remeshSection(c, sy)
+    }
+    this.dirty.clear()
     this.lastRemeshMs = performance.now() - t0
   }
 
@@ -237,7 +286,8 @@ export default class Terrain {
   /** 在主线程重建一个 section 的网格 */
   remeshSection(c: Chunk, sy: number): void {
     const hood = new Uint8Array(N * N * N)
-    this.fillNeighborhood(c, sy, hood)
+    if (this.fillNeighborhood(c, sy, hood)) c.staleSections.delete(sy)
+    else c.staleSections.add(sy)
     const m = meshSection(hood, { greedy: this.greedy })
     this.setSectionMesh(c, sy, m.opaque.indices.length + m.water.indices.length > 0 ? m : null)
   }
@@ -245,8 +295,9 @@ export default class Terrain {
   /**
    * 填 18³ 的邻域：section 本身 + 四周一圈（可能在相邻的 section 或相邻的区块里）。
    * 先把周围 3×3 个区块取出来，避免每个方块都去 Map 里查一次。没加载的邻居当作空气。
+   * 返回 false 表示有邻居区块没加载。
    */
-  private fillNeighborhood(c: Chunk, sy: number, out: Uint8Array): void {
+  private fillNeighborhood(c: Chunk, sy: number, out: Uint8Array): boolean {
     const around: (Chunk | undefined)[] = []
     for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) around.push(this.chunks.get(`${c.cx + dx},${c.cz + dz}`))
     const y0 = c.minY + sy * 16
@@ -260,6 +311,7 @@ export default class Terrain {
         }
       }
     }
+    return !around.includes(undefined)
   }
 
   private setSectionMesh(c: Chunk, sy: number, m: { opaque: SectionMesh; water: SectionMesh } | null): void {
@@ -317,6 +369,7 @@ export default class Terrain {
       /** 同样的区块用 v0 的方式（每格 1 字节）要多少 */
       v0Bytes: this.chunks.size * 16 * 16 * height,
       meshBytes,
+      fluidQueue: this.fluids.queued,
       sectionMeshes,
       vertices,
       quads

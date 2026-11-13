@@ -187,12 +187,12 @@ test('贪婪网格：三角形从外面看是逆时针（法线朝外）', () =>
   }
 })
 
-test('水：只在挨着空气的地方画，水面压低到 14/16', () => {
+test('水：只在挨着空气的地方画，水源的水面在 8/9 高度（原版）', () => {
   const b = hood()
   for (let z = -1; z <= 16; z++) for (let x = -1; x <= 16; x++) for (let y = -1; y <= 3; y++) b[nIndex(x, y, z)] = BlockType.water
   const w = meshSection(b).water
   assert.equal(quads(w), 1) // 只有最上面一层的顶面
-  for (let i = 1; i < w.positions.length; i += 3) assert.equal(w.positions[i], 3 * 16 + 14)
+  for (let i = 1; i < w.positions.length; i += 3) assert.equal(w.positions[i], Math.round((3 + 8 / 9) * POSITION_SCALE))
 })
 
 test('纹理：每个方块每个面都指向一张存在的纹理', () => {

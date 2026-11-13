@@ -1,17 +1,18 @@
 import { BLOCK_BITS, BlockType } from '../blocks'
 import PalettedContainer, { type PalettedData } from '../chunk/PalettedContainer'
 import { meshSection, N, nIndex, type MeshOptions, type SectionMesh } from '../mesh/mesher'
-import { NoiseChunk, type NoiseSettingsInfo, type Worldgen } from '../worldgen'
+import { type Aquifer, Fluid, NoiseChunk, type NoiseSettingsInfo, type Worldgen } from '../worldgen'
 
 /**
  * 生成一个区块：密度 → 方块 → 网格。
  *
- *   1. NoiseChunk 按原版规则算出每个方块的 final_density，> 0 是石头，≤ 0 是空气
- *   2. 临时的“地表规则”：把最上面几层石头换成草/土/沙，海平面以下的空气换成水
+ *   1. NoiseChunk 按原版规则算出每个方块的 final_density，> 0 是石头；
+ *      ≤ 0 的地方交给含水层（v3）决定是空气、水、岩浆，还是含水层之间的石头墙
+ *   2. 临时的“地表规则”：把最上面几层石头换成草/土/沙
  *   3. 切成 16³ 的 section，每段用调色板压缩，并生成贪婪网格
  *
- * 第 1 步与原版一致（v0 的成果）；第 2 步是我自己写的近似版，原版的地表规则（surface_rule）
- * 依赖生物群系，留到 v4 再做。含水层也没做，所以洞穴里不会有水。
+ * 第 1 步与原版一致（v0 的密度函数 + v3 的含水层）；第 2 步是我自己写的近似版，
+ * 原版的地表规则（surface_rule）依赖生物群系，留到 v4 再做。
  *
  * 为了让区块边上的面也能正确剔除，这里多算一圈：实际生成 18×18 列（区块 16×16 + 四周各 1），
  * 中间 16×16 交给主线程保存，外面一圈只用来判断“邻居是不是实心”。
@@ -31,7 +32,17 @@ function hash01(x: number, y: number, z: number): number {
 /** 一个 section 的网格；整段没有面时为 null */
 export type SectionMeshes = { opaque: SectionMesh; water: SectionMesh } | null
 
-export function generateChunk(wg: Worldgen, settingsId: string, s: NoiseSettingsInfo, cx: number, cz: number, opts: MeshOptions = {}) {
+const FLUID_BLOCK = [BlockType.air, BlockType.water, BlockType.lava]
+
+export function generateChunk(
+  wg: Worldgen,
+  settingsId: string,
+  s: NoiseSettingsInfo,
+  cx: number,
+  cz: number,
+  opts: MeshOptions = {},
+  aquifer: Aquifer = wg.aquifer(settingsId, cx, cz)
+) {
   const t0 = performance.now()
   const H = s.height
   const minY = s.minY
@@ -60,9 +71,18 @@ export function generateChunk(wg: Worldgen, settingsId: string, s: NoiseSettings
     cellWidth: s.cellWidth,
     cellHeight: s.cellHeight
   })
+  // 生成完马上要“流一下”的流体（含水层边上的水，原版 shouldScheduleFluidUpdate），只记区块内部的
+  const fluidUpdates: number[] = []
   noise.forEach(
     (x, y, z, density) => {
-      if (density > 0) padded[pidx(x - wx0, y, z - wz0)] = BlockType.stone
+      const f = aquifer.computeSubstance(x, y, z, density)
+      const b = f === null ? BlockType.stone : FLUID_BLOCK[f]
+      padded[pidx(x - wx0, y, z - wz0)] = b
+      if (f !== null && f !== Fluid.air && aquifer.shouldScheduleFluidUpdate) {
+        const lx = x - cx * 16
+        const lz = z - cz * 16
+        if (lx >= 0 && lx < 16 && lz >= 0 && lz < 16) fluidUpdates.push(((y - minY) * 16 + lz) * 16 + lx)
+      }
     },
     { x0: wx0, x1: wx0 + W, z0: wz0, z1: wz0 + W }
   )
@@ -72,21 +92,19 @@ export function generateChunk(wg: Worldgen, settingsId: string, s: NoiseSettings
     for (let px = 0; px < W; px++) {
       const wx = wx0 + px
       const wz = wz0 + pz
-      // 找这一列最高的石头
+      // 找这一列最高的石头（水、岩浆不算）
       let top = minY - 1
       for (let y = minY + H - 1; y >= minY; y--) {
-        if (padded[pidx(px, y, pz)] !== BlockType.air) {
+        if (padded[pidx(px, y, pz)] === BlockType.stone) {
           top = y
           break
         }
       }
-      // 地表以上、海平面以下的空气 → 水
-      for (let y = Math.max(top + 1, minY); y < sea; y++) padded[pidx(px, y, pz)] = BlockType.water
 
       // 表层：水下是沙/沙砾，海边是沙滩，其他是草 + 3 层土
       if (top >= minY) {
-        const underwater = top < sea - 1
-        const beach = !underwater && top <= sea + 1
+        const underwater = top + 1 < minY + H && padded[pidx(px, top + 1, pz)] === BlockType.water
+        const beach = !underwater && top <= sea + 1 && top >= sea - 2
         for (let d = 0; d < 4 && top - d >= minY; d++) {
           const y = top - d
           if (padded[pidx(px, y, pz)] !== BlockType.stone) break // 碰到洞穴就停
@@ -139,5 +157,5 @@ export function generateChunk(wg: Worldgen, settingsId: string, s: NoiseSettings
     meshes.push(m.opaque.indices.length + m.water.indices.length > 0 ? m : null)
   }
 
-  return { cx, cz, sections, meshes, ms: performance.now() - t0 }
+  return { cx, cz, sections, meshes, fluidUpdates: Int32Array.from(fluidUpdates), ms: performance.now() - t0 }
 }

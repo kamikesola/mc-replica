@@ -137,6 +137,7 @@ export default class UI {
       this.playButton.disabled = false
     }
 
+    this.core.setMedium(this.control.medium)
     this.f3.update(this.fps)
     this.noiseMap.update()
   }

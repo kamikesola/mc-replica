@@ -6,10 +6,14 @@ import { test } from 'node:test'
 import { tickPlayer, type MoveInput, type MoveWorld } from '../src/control/movement'
 import { AABB, collide, EMPTY, FULL_CUBE, type ShapeFn } from '../src/control/physics'
 import Player from '../src/player'
+import { BlockType } from '../src/terrain/blocks'
 
 /** 用一个函数描述世界：solid(x,y,z) 为真就是完整方块；water 同理 */
 function world(solid: (x: number, y: number, z: number) => boolean, water: (x: number, y: number, z: number) => boolean = () => false): MoveWorld {
-  return { shape: (x, y, z) => (solid(x, y, z) ? FULL_CUBE : EMPTY), isWater: water }
+  return {
+    shape: (x, y, z) => (solid(x, y, z) ? FULL_CUBE : EMPTY),
+    block: (x, y, z) => (solid(x, y, z) ? BlockType.stone : water(x, y, z) ? BlockType.water : BlockType.air)
+  }
 }
 const flat = world((_x, y) => y < 64)
 const input = (o: Partial<MoveInput> = {}): MoveInput => ({ forward: 0, left: 0, jump: false, sneak: false, sprint: false, yaw: 0, ...o })
@@ -103,7 +107,7 @@ test('潜行不会掉下方块边缘；不潜行会掉下去', () => {
 test('蹲着能钻进 1.5 格高的缝；在缝里松开 Shift 站不起来', () => {
   // z < -2 的地方头顶 y = 65.5 有一块“半砖”顶棚（1.5 格高的空间）
   const shape: ShapeFn = (_x, y, z) => (y < 64 ? FULL_CUBE : y === 65 && z < -2 ? [new AABB(0, 0.5, 0, 1, 1, 1)] : EMPTY)
-  const w: MoveWorld = { shape, isWater: () => false }
+  const w: MoveWorld = { shape, block: () => BlockType.air }
   const stand = spawn()
   for (let i = 0; i < 60; i++) tickPlayer(stand, input({ forward: 1 }), w)
   assert.ok(stand.pos.z > -2.31, `站着进不去，z = ${stand.pos.z}`)
@@ -117,7 +121,7 @@ test('蹲着能钻进 1.5 格高的缝；在缝里松开 Shift 站不起来', ()
 test('抬步：能直接走上 0.5 格的台阶，走不上 1 格的方块', () => {
   const slab: ShapeFn = (_x, y, z) => (y < 64 ? FULL_CUBE : y === 64 && z < -1 ? [new AABB(0, 0, 0, 1, 0.5, 1)] : EMPTY)
   const p = spawn()
-  for (let i = 0; i < 40; i++) tickPlayer(p, input({ forward: 1 }), { shape: slab, isWater: () => false })
+  for (let i = 0; i < 40; i++) tickPlayer(p, input({ forward: 1 }), { shape: slab, block: () => BlockType.air })
   assert.equal(p.pos.y, 64.5)
   const wall = spawn()
   for (let i = 0; i < 40; i++) tickPlayer(wall, input({ forward: 1 }), world((_x, y, z) => y < 64 || (y === 64 && z < -1)))

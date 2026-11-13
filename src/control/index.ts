@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js'
 import Player, { PHYSICS } from '../player'
 import type Terrain from '../terrain'
-import { BLOCKS, BlockType, HOTBAR, isSolid } from '../terrain/blocks'
+import { BLOCKS, BlockType, HOTBAR, isFluid, isSolid } from '../terrain/blocks'
 import { tickPlayer, type MoveInput, type MoveWorld } from './movement'
 import { collides, EMPTY, FULL_CUBE, type Vec3 } from './physics'
 import { raycast, type RayHit } from './raycast'
@@ -65,6 +65,11 @@ export default class Control {
   private sprintByDoubleTap = false
   private world: MoveWorld
 
+  /** 眼睛在什么里面（UI 用来切换雾） */
+  get medium(): 'air' | 'water' | 'lava' {
+    return this.player.underLava ? 'lava' : this.player.underWater ? 'water' : 'air'
+  }
+
   constructor(scene: THREE.Scene, camera: THREE.PerspectiveCamera, player: Player, terrain: Terrain) {
     this.scene = scene
     this.camera = camera
@@ -78,7 +83,7 @@ export default class Control {
         const b = terrain.getBlock(x, y, z)
         return b === null || isSolid(b) ? FULL_CUBE : EMPTY
       },
-      isWater: (x, y, z) => terrain.getBlock(x, y, z) === BlockType.water
+      block: (x, y, z) => terrain.getBlock(x, y, z) ?? BlockType.bedrock
     }
     this.initKeyboard()
     this.initMouse()
@@ -185,7 +190,7 @@ export default class Control {
     const y = t.y + t.ny
     const z = t.z + t.nz
     const here = this.terrain.getBlock(x, y, z)
-    if (here !== BlockType.air && here !== BlockType.water) return
+    if (here === null || (here !== BlockType.air && !isFluid(here))) return
     // 不能把方块放进自己身体里
     const b = this.player.body
     if (collides(this.player.pos, b.width, b.height, (bx, by, bz) => (bx === x && by === y && bz === z ? FULL_CUBE : EMPTY))) return
@@ -241,6 +246,7 @@ export default class Control {
   private tick() {
     const p = this.player
     tickPlayer(p, this.readInput(), this.world)
+    this.terrain.tick()
     if (!p.sprinting) this.sprintByDoubleTap = false // 撞墙停下后，要重新双击才能再跑
 
     this.prevEye = this.eye
@@ -292,7 +298,7 @@ export default class Control {
     const oz = p.prevPos.z + (p.pos.z - p.prevPos.z) * t
     this.target = raycast(ox, oy, oz, dir.x, dir.y, dir.z, this.reach, (x, y, z) => {
       const b = this.terrain.getBlock(x, y, z)
-      return b !== null && b !== BlockType.air && b !== BlockType.water
+      return b !== null && b !== BlockType.air && !isFluid(b)
     })
     if (this.target) this.terrain.highlight.show(this.target.x, this.target.y, this.target.z)
     else this.terrain.highlight.hide()

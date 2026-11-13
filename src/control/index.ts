@@ -6,6 +6,9 @@ import { BLOCKS, BlockType, HOTBAR } from '../terrain/blocks'
 import { collides, moveAndCollide, type Vec3 } from './physics'
 import { raycast, type RayHit } from './raycast'
 
+/** 水的阻力：原版每 tick 速度 ×0.8，换算成连续形式的衰减系数（每秒） */
+const WATER_DRAG = -Math.log(0.8) / 0.05
+
 /**
  * Control：键盘鼠标输入 → 玩家移动、挖方块、放方块（对应原项目的 Control 类）。
  *
@@ -29,6 +32,8 @@ export default class Control {
   spawned = false
   /** 上一帧水平方向是否撞到了方块（水里爬岸用） */
   private hitWall = false
+  /** 游泳状态：碰到水进入，回到陆地才退出（决定水平速度） */
+  private swimming = false
   /** 当前选中的物品栏格子 0..8 */
   slot = 0
   /** 准星对准的方块 */
@@ -181,20 +186,34 @@ export default class Control {
     else p.setMode(sprint && this.keys.has('KeyW') ? Mode.sprinting : Mode.walking)
   }
 
-  private get inWater(): boolean {
-    const b = this.terrain.getBlock(Math.floor(this.feet.x), Math.floor(this.feet.y + 0.4), Math.floor(this.feet.z))
-    return b === BlockType.water
-  }
-
-  /** 脚碰到水就算（比 inWater 宽松）：浮在水面上时脚还在水里，身体已经出水了 */
-  private get touchingWater(): boolean {
-    const b = this.terrain.getBlock(Math.floor(this.feet.x), Math.floor(this.feet.y), Math.floor(this.feet.z))
-    return b === BlockType.water || this.inWater
+  /**
+   * 脚底泡在水里多深（格）：0 表示没碰到水。
+   * 水面高度和画出来的一样：上面不是水的水块，水面在 14/16 处（见 mesh/mesher.ts）。
+   */
+  private get waterDepth(): number {
+    const { x, y, z } = this.feet
+    const bx = Math.floor(x)
+    const bz = Math.floor(z)
+    let top = -Infinity
+    // 从脚所在的格子往上找，找到连续的水柱顶
+    for (let by = Math.floor(y); by <= Math.floor(y + this.player.body.height); by++) {
+      if (this.terrain.getBlock(bx, by, bz) !== BlockType.water) break
+      top = this.terrain.getBlock(bx, by + 1, bz) === BlockType.water ? by + 1 : by + 0.875
+    }
+    return Math.max(0, top - y)
   }
 
   private updateVelocity(dt: number) {
     const p = this.player
     const v = p.velocity
+    const depth = p.flying ? 0 : this.waterDepth
+    const touchingWater = depth > 0
+
+    // “游泳状态”：碰到水就进入，回到地面（且不在水里）才退出。
+    // 从水面跳出去的那一下也算游泳状态，所以水平速度不会突然变成陆地速度（原版也是这样：
+    // 出水的一瞬间人在空中，空中几乎不能加速，保持的是水里的速度）
+    if (touchingWater) this.swimming = true
+    else if (p.onGround || p.flying) this.swimming = false
 
     // 水平方向：相机朝向投影到水平面上
     const forward = new THREE.Vector3()
@@ -208,7 +227,7 @@ export default class Control {
     if (this.keys.has('KeyD')) move.add(right)
     if (this.keys.has('KeyA')) move.sub(right)
     if (move.lengthSq() > 0) move.normalize()
-    const speed = p.speed * (this.inWater && !p.flying ? 0.5 : 1)
+    const speed = p.speed * (this.swimming ? 0.5 : 1)
     v.x = move.x * speed
     v.z = move.z * speed
 
@@ -217,15 +236,31 @@ export default class Control {
     const down = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight')
     if (p.flying) {
       v.y = up ? p.speed * 0.75 : down ? -p.speed * 0.75 : 0
-    } else if (this.hitWall && this.touchingWater && move.lengthSq() > 0) {
-      // 在水里往前游撞到方块：往上蹿一下，好爬上岸。
-      // 原版 LivingEntity.travel 里也是这样：水中水平碰撞时把竖直速度设成 0.3 格/tick（= 6 格/秒）。
-      // 没有这一条的话，浮在水面时脚比岸边低约 0.4 格，又不在地面上不能跳，就永远上不了岸
-      v.y = 6
-    } else if (this.inWater) {
-      // 水里：重力小、下沉慢，按住空格往上游
-      v.y = up ? 3 : Math.max(v.y - p.gravity * 0.2 * dt, -2.5)
+      return
+    }
+
+    // 在浅水里站着（水没过脚踝不到 0.4 格）按空格：正常起跳，和陆地一样
+    const shallowJump = up && p.onGround && depth <= 0.4
+
+    if (touchingWater && !shallowJump) {
+      // 水里的竖直速度，按原版每 tick 的规则换算成每秒（原版 LivingEntity）：
+      //   每 tick：按住跳 y += 0.04；然后 y *= 0.8（水的阻力）；再 y -= 0.005（水里的重力）
+      //   稳定后：按住跳 = +0.135 格/tick = +2.7 格/秒；松开 = -0.025 格/tick = -0.5 格/秒（慢慢下沉）
+      // 这里用连续形式：速度以 e^(-k·t) 的速度靠近稳定值，k = -ln(0.8) / 0.05 秒
+      const target = up ? 2.7 : -0.5
+      v.y = target + (v.y - target) * Math.exp(-WATER_DRAG * dt)
+
+      // 游向一格高的岸边时往上蹿一下（原版 LivingEntity.travel）：
+      // 水里水平方向撞到方块，并且把人抬高 0.6 格之后前面是空的 → 竖直速度设为 0.3 格/tick = 6 格/秒。
+      // 抬高 0.6 格还撞墙（高墙、水下的峭壁）就不会触发，所以不会贴着墙一直往上爬
+      if (this.hitWall && move.lengthSq() > 0) {
+        const body = { half: p.body.width / 2, height: p.body.height }
+        const lifted = { x: this.feet.x + move.x * 0.3, y: this.feet.y + 0.6, z: this.feet.z + move.z * 0.3 }
+        if (!collides(lifted, body, this.terrain.isSolidAt.bind(this.terrain))) v.y = 6
+      }
     } else {
+      // 陆地 / 空中（包括从水面跳出去的那一下）：正常重力。
+      // 原版在水面按住空格就是这样：在水里往上加速 → 冲出水面 → 重力拉回来 → 再进水，一上一下地“浮”着
       v.y = Math.max(v.y - p.gravity * dt, -p.terminalVelocity)
       if (up && p.onGround) v.y = Math.sqrt(2 * p.gravity * p.jumpHeight) // v² = 2gh
     }

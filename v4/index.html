@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>mc-replica v4</title>
+    <script type="module" crossorigin src="./assets/index-BR2EN5Ah.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-BSgL1RVc.css">
+  </head>
+  <body>
+    <!-- 游戏画面（canvas）由 Core 插入到 body 里；下面是 UI，由 src/ui 控制 -->
+
+    <!-- 菜单：没锁定鼠标时显示 -->
+    <div id="menu">
+      <div class="panel">
+        <h1>mc-replica <span class="ver">v3</span></h1>
+        <p class="sub">用 TypeScript 复刻 Minecraft Java 版 1.21.1 · 地形来自原版密度函数</p>
+        <p id="worldInfo" class="info"></p>
+
+        <button id="play" class="primary" disabled>开始游戏</button>
+        <p id="loadingStatus" class="hint">正在读取数据包…</p>
+
+        <details>
+          <summary>世界设置</summary>
+          <label>种子 <input id="seedInput" spellcheck="false" /></label>
+          <label>noise_settings <select id="settingsSelect"></select></label>
+          <button id="regenerate">用新设置重新生成</button>
+          <label>视距（区块）
+            <select id="distance">
+              <option>3</option><option>4</option><option>5</option><option>6</option><option>8</option><option>10</option>
+            </select>
+          </label>
+          <label class="check"><input type="checkbox" id="bobbing" checked /> 视角摇晃</label>
+        </details>
+
+        <div class="keys">
+          <span><b>WASD</b> 移动</span><span><b>空格</b> 跳 / 上升</span><span><b>Shift</b> 潜行 / 下降</span>
+          <span><b>双击 W / R</b> 疾跑</span><span><b>双击空格 / F</b> 飞行</span><span><b>左键</b> 挖</span>
+          <span><b>右键</b> 放</span><span><b>1–9 / 滚轮</b> 选方块</span><span><b>F3</b> 调试</span>
+          <span><b>M</b> 噪声图（N 换字段，+/- 缩放）</span><span><b>G</b> 贪婪网格开关</span>
+          <span><b>K</b> 线框</span><span><b>Esc</b> 菜单</span>
+        </div>
+      </div>
+    </div>
+
+    <div id="crosshair">+</div>
+    <div id="hotbarWrap"><div id="slotName"></div><div id="hotbar"></div></div>
+    <pre id="f3" class="hidden"></pre>
+
+    <!-- 噪声图面板（M 键） -->
+    <div id="noiseMap" class="hidden">
+      <div class="row">
+        <select class="field"></select>
+        <select class="scale">
+          <option value="1">1 格/像素</option>
+          <option value="2" selected>2 格/像素</option>
+          <option value="4">4 格/像素</option>
+          <option value="8">8 格/像素</option>
+        </select>
+      </div>
+      <canvas></canvas>
+      <div class="legend"></div>
+    </div>
+
+  </body>
+</html>

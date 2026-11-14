@@ -1,5 +1,8 @@
 import { BLOCKS, type BlockType } from '../terrain/blocks'
-import { paintAll, TEX, TEXTURE_LAYER } from '../terrain/textures/painters'
+import { paintAll, TEX, TEXTURE_LAYER, TINT_BY_LAYER } from '../terrain/textures/painters'
+
+/** 物品栏里的默认颜色（原版物品图标用的也是固定颜色）：草、树叶、水 */
+const ICON_TINT = [0, 0x91bd59, 0x48b518, 0x3f76e4]
 
 /**
  * 物品栏图标：用方块自己的纹理画一个斜 45° 的小立方体（和原版物品栏里的方块图标一样）。
@@ -15,10 +18,14 @@ function layerCanvas(layer: number, brightness: number): HTMLCanvasElement {
   c.width = c.height = TEX
   const img = new ImageData(TEX, TEX)
   const off = layer * TEX * TEX * 4
+  const tint = ICON_TINT[TINT_BY_LAYER[layer]]
+  const k = [(tint >> 16) & 255, (tint >> 8) & 255, tint & 255].map((v) => v / 255)
   for (let i = 0; i < TEX * TEX * 4; i += 4) {
-    img.data[i] = pixels[off + i] * brightness
-    img.data[i + 1] = pixels[off + i + 1] * brightness
-    img.data[i + 2] = pixels[off + i + 2] * brightness
+    // alpha < 255 的像素要染色（见 textures/painters.ts）
+    const t = tint !== 0 && pixels[off + i + 3] < 255
+    img.data[i] = pixels[off + i] * brightness * (t ? k[0] : 1)
+    img.data[i + 1] = pixels[off + i + 1] * brightness * (t ? k[1] : 1)
+    img.data[i + 2] = pixels[off + i + 2] * brightness * (t ? k[2] : 1)
     img.data[i + 3] = 255
   }
   c.getContext('2d')!.putImageData(img, 0, 0)

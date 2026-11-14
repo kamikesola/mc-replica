@@ -21,6 +21,11 @@ import {
   preliminarySurfaceSampler
 } from './aquifer/Aquifer'
 import type { PositionalRandomFactory } from './random/RandomSource'
+import { type BiomeData, coldEnoughToSnow, defaultBiome, parseBiome, temperatureAt } from './biome/Biome'
+import { BiomeManager, obfuscateSeed } from './biome/BiomeManager'
+import { ParameterList, sampleClimate, type ClimateSampler } from './biome/Climate'
+import { netherBiomeParameters, overworldBiomeParameters } from './biome/OverworldBiomeBuilder'
+import { SurfaceSystem } from './surface/SurfaceSystem'
 
 /**
  * 世界生成的“总入口”。把四个步骤串起来，外部只需要和这一个类打交道：
@@ -51,6 +56,9 @@ export class Worldgen {
   /** 预估地表高度的缓存（每个 noise_settings 一张），换种子时清空 */
   private surfaceCaches = new Map<string, Map<number, number>>()
   private aquiferRandom: PositionalRandomFactory | null = null
+  private biomeSources = new Map<string, BiomeSource>()
+  private surfaceSystems = new Map<string, SurfaceSystem | null>()
+  private biomeData = new Map<string, BiomeData>()
 
   constructor(packs: PackInput[] = []) {
     for (const p of packs) this.addPack(p)
@@ -106,11 +114,65 @@ export class Worldgen {
     this.cachedSamplers.clear()
     this.surfaceCaches.clear()
     this.aquiferRandom = null
+    this.biomeSources.clear()
+    this.surfaceSystems.clear()
     return value
   }
 
   get seed(): bigint {
     return this.randomState.seed
+  }
+
+  /** 预估地表高度（原版 NoiseChunk.preliminarySurfaceLevel），按 noise_settings 缓存；含水层和地表规则都要用 */
+  preliminarySurface(settingsId: string): (x: number, z: number) => number {
+    const s = this.getSettings(settingsId)
+    const id = normalizeId(settingsId)
+    let cache = this.surfaceCaches.get(id)
+    if (!cache || cache.size > 500_000) {
+      cache = new Map()
+      this.surfaceCaches.set(id, cache)
+    }
+    if (!s.router.initial_density_without_jaggedness) return () => s.minY
+    return preliminarySurfaceSampler(this.sampler({ kind: 'router', settings: id, field: 'initial_density_without_jaggedness' }), s.minY, s.height, s.cellHeight, cache)
+  }
+
+  /**
+   * 生物群系来源（v4）。主世界系列（overworld / amplified / large_biomes / caves / floating_islands）用原版主世界参数表，
+   * 下界用下界参数表，末地和其他（包括 demo 的简化地形）只有一个群系。
+   */
+  biomes(settingsId: string): BiomeSource {
+    const id = normalizeId(settingsId)
+    let b = this.biomeSources.get(id)
+    if (!b) {
+      b = new BiomeSource(this, id)
+      this.biomeSources.set(id, b)
+    }
+    return b
+  }
+
+  /** 生物群系的数据（温度、颜色……）；没有原版群系文件时用默认值 */
+  biome(id: string): BiomeData {
+    let b = this.biomeData.get(id)
+    if (!b) {
+      const json = this.registry.biome.get(id)
+      b = json === undefined ? defaultBiome(id) : parseBiome(id, json)
+      this.biomeData.set(id, b)
+    }
+    return b
+  }
+
+  /** 地表规则（v4）；noise_settings 没有 surface_rule 时返回 null（demo 的简化地形用临时规则） */
+  surfaceSystem(settingsId: string): SurfaceSystem | null {
+    const id = normalizeId(settingsId)
+    if (!this.surfaceSystems.has(id)) {
+      const s = this.getSettings(id)
+      const rs = this.randomState
+      this.surfaceSystems.set(
+        id,
+        s.surfaceRule ? new SurfaceSystem((n) => rs.getOrCreateNoise(n), rs.random, s.surfaceRule, s.defaultBlock, s.seaLevel) : null
+      )
+    }
+    return this.surfaceSystems.get(id)!
   }
 
   /**
@@ -226,5 +288,69 @@ export class Worldgen {
         : this.getSettings(k.settings).router[k.field as RouterField]
     if (!fn) throw new Error(`${key} 不存在`)
     return describe(fn)
+  }
+}
+
+const OVERWORLD_LIKE = ['overworld', 'amplified', 'large_biomes', 'caves', 'floating_islands']
+
+/**
+ * 一种 noise_settings 对应的生物群系来源：
+ *   noiseBiome(qx, qy, qz)  quart 坐标 → 生物群系（查气候参数表，带缓存）
+ *   getBiome(x, y, z)       方块坐标 → 生物群系（原版 BiomeManager 的抖动缩放）
+ */
+export class BiomeSource {
+  readonly manager: BiomeManager
+  private readonly list: ParameterList<string> | null
+  private readonly single: string
+  private readonly climate: ClimateSampler | null
+  private readonly cache = new Map<number, string>()
+  private readonly minQY: number
+  private readonly maxQY: number
+
+  constructor(
+    readonly wg: Worldgen,
+    readonly settingsId: string
+  ) {
+    const s = wg.getSettings(settingsId)
+    const name = settingsId.replace(/^minecraft:/, '')
+    const isMinecraft = settingsId.startsWith('minecraft:')
+    const params = isMinecraft && OVERWORLD_LIKE.includes(name) ? overworldBiomeParameters({ paleGarden: wg.registry.biome.has('minecraft:pale_garden') }) : isMinecraft && name === 'nether' ? netherBiomeParameters() : null
+    this.list = params ? new ParameterList(params) : null
+    this.single = isMinecraft && name === 'end' ? 'minecraft:the_end' : 'minecraft:plains'
+    const r = s.router
+    const fields = ['temperature', 'vegetation', 'continents', 'erosion', 'depth', 'ridges'] as const
+    this.climate =
+      this.list && fields.every((f) => r[f])
+        ? (Object.fromEntries(fields.map((f) => [f, wg.sampler({ kind: 'router', settings: settingsId, field: f })])) as unknown as ClimateSampler)
+        : null
+    // 原版 ChunkAccess.getNoiseBiome 把 y 限制在世界高度以内
+    this.minQY = s.minY >> 2
+    this.maxQY = this.minQY + (s.height >> 2) - 1
+    this.manager = new BiomeManager(obfuscateSeed(wg.seed), (qx, qy, qz) => this.noiseBiome(qx, qy, qz))
+  }
+
+  noiseBiome(qx: number, qy: number, qz: number): string {
+    if (!this.list || !this.climate) return this.single
+    qy = Math.min(Math.max(qy, this.minQY), this.maxQY)
+    const key = ((qx + 0x100000) * 0x200000 + (qz + 0x100000)) * 256 + (qy + 128)
+    let b = this.cache.get(key)
+    if (b === undefined) {
+      if (this.cache.size > 400_000) this.cache.clear()
+      b = this.list.find(sampleClimate(this.climate, qx, qy, qz))
+      this.cache.set(key, b)
+    }
+    return b
+  }
+
+  getBiome(x: number, y: number, z: number): string {
+    return this.manager.getBiome(x, y, z)
+  }
+
+  coldEnoughToSnow(biome: string, x: number, y: number, z: number): boolean {
+    return coldEnoughToSnow(this.wg.biome(biome), x, y, z)
+  }
+
+  temperature(biome: string, x: number, y: number, z: number): number {
+    return temperatureAt(this.wg.biome(biome), x, y, z)
   }
 }

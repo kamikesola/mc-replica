@@ -21,6 +21,8 @@ import { CHUNK_SIZE } from '../../terrain/chunk/Chunk'
 export default class F3 {
   el: HTMLElement
   visible = false
+  /** 脚下的生物群系（Worker 算） */
+  private biome = '…'
   private routerLine = ''
   private lastQuery = 0
   private querying = false
@@ -65,7 +67,10 @@ export default class F3 {
       this.lastQuery = now
       this.terrain.pool
         .call('f3', { x: bx, y: by, z: bz })
-        .then((r) => (this.routerLine = r.line))
+        .then((r) => {
+          this.routerLine = r.line
+          this.biome = r.biome
+        })
         .finally(() => (this.querying = false))
     }
 
@@ -76,7 +81,7 @@ export default class F3 {
     const r = this.core.renderer.info.render
     const mb = (b: number) => (b / 1048576).toFixed(1) + ' MB'
     const lines = [
-      `mc-replica v3 (${fps} fps, 20 TPS)`,
+      `mc-replica v4 (${fps} fps, 20 TPS)`,
       `种子: ${info?.seed ?? '…'}    noise_settings: ${info?.settings ?? '…'}`,
       `区块: ${st.loaded} 已加载, ${st.loading} 生成中, 上一个用时 ${this.terrain.lastChunkMs.toFixed(0)} ms, 挖/放重建 ${this.terrain.lastRemeshMs.toFixed(1)} ms`,
       `方块数据: ${mb(st.bytes)}（v0 的存法要 ${mb(st.v0Bytes)}）`,
@@ -88,6 +93,7 @@ export default class F3 {
       `Block: ${bx} ${by} ${bz}`,
       `Chunk: ${Math.floor(bx / CHUNK_SIZE)} ${Math.floor(bz / CHUNK_SIZE)}  (区块内 ${bx & 15} ${bz & 15})`,
       `Facing: ${this.control.facing}`,
+      `Biome: ${this.biome}`,
       `状态: ${this.control.player.state}${this.control.player.onGround ? '  落地' : ''}    速度: ${this.speed()}`,
       '',
       this.routerLine,

@@ -1,4 +1,4 @@
-# 架构说明（v3）
+# 架构说明（v4）
 
 ## 整体：和原项目一样，一个模块一个类
 
@@ -34,7 +34,9 @@ terrain.init(seed, settings)                          // 让 Worker 换种子
  generate.ts → generateChunk()            terrain/worker/surface.ts
    │ 1. NoiseChunk 算 final_density       ← terrain/worldgen（v0 的核心成果）
    │    > 0 石头；≤ 0 交给含水层：空气 / 水 / 岩浆 / 石头墙（v3）
-   │ 2. 临时地表规则：草 / 土 / 沙 / 水 / 深板岩 / 基岩
+   │ 2. 地表（v4）：原版 surface_rule（SurfaceSystem）按生物群系换成草 / 土 / 沙 / 陶瓦 / 雪……
+   │    没有 surface_rule 的 noise_settings（demo）仍用 v0~v3 的临时规则
+   │ 2.5 每一列草 / 树叶 / 水的颜色：周围 5×5 列的生物群系颜色取平均，随区块一起传回主线程
    │ 3. 每 16 层切一个 section：
    │    PalettedContainer.fromValues()    ← terrain/chunk（调色板 + 位压缩）
    │    meshSection() 贪婪网格             ← terrain/mesh/mesher.ts
@@ -66,6 +68,7 @@ Chunk（16×16×384）
 
 - 一个 section 两个网格：不透明、水。每个顶点 10 字节：`position` Uint16×3（坐标 ×16）+ `info` Uint8×4（方向、纹理层、AO）。
 - 所有方块共用一个 `ShaderMaterial`，纹理在一个 `DataArrayTexture` 里，纹理坐标和明暗在着色器里算。
+- 生物群系颜色（v4）：草、树叶、水的纹理是灰度的，要染色的像素 alpha = 0 作标记；着色器按世界 x, z 从三张 512×512 的颜色图（每列一个像素，按区块写入）取颜色相乘。网格不用为颜色重建。
 - 包围球写死为 section 的外接球（位置放大存储，three 自动算的不对）。
 
 ## 各目录
@@ -85,7 +88,7 @@ Chunk（16×16×384）
 | | `chunk/BitStorage.ts` | 位压缩数组，值不跨整数 |
 | | `blocks.ts` | 方块种类、每个面的纹理、是否实心、物品栏 |
 | | `mesh/mesher.ts` | 贪婪网格：面剔除 + 顶点 AO + 合并；Worker 和主线程共用 |
-| | `mesh/materials.ts` | 纹理数组 ShaderMaterial：不透明 / 水 / 线框 |
+| | `mesh/materials.ts` | 纹理数组 ShaderMaterial：不透明 / 水 / 线框；生物群系颜色图 |
 | | `textures/painters.ts` | 用代码画 16 张纹理 |
 | | `textures/index.ts` | 纹理数组 |
 | | `fluid/FluidTicker.ts` | 流体流动：计划刻、getNewLiquid、spread、岩浆遇水 |
@@ -109,9 +112,11 @@ Chunk（16×16×384）
 | --- | --- |
 | `math/` | 原版 `Mth` 的函数、MD5 |
 | `random/` | `LegacyRandomSource`（= java.util.Random）、`XoroshiroRandomSource`、位置随机工厂 |
-| `noise/` | `ImprovedNoise` → `PerlinNoise` → `NormalNoise`，`BlendedNoise`，`SimplexNoise` |
+| `noise/` | `ImprovedNoise` → `PerlinNoise` → `NormalNoise`，`BlendedNoise`，`SimplexNoise`，`PerlinSimplexNoise`（v4，群系温度 / 草色噪声） |
 | `registry/` | 数据包注册表：文件路径 → 资源 ID |
 | `aquifer/` | 含水层：格子中心点、水位、压力墙、全局流体、预估地表高度 |
+| `biome/` | 生物群系（v4）：气候参数表（`Climate`、`OverworldBiomeBuilder`）、方块坐标 → 群系的抖动缩放（`BiomeManager`）、群系 JSON 里的温度 / 颜色（`Biome`） |
+| `surface/` | 地表规则（v4）：规则 JSON → 函数（`SurfaceRules`）、逐列应用 + 恶地石柱 / 冰山 / 陶瓦条纹（`SurfaceSystem`） |
 | `density/` | 密度函数的各种类型、JSON 解析、样条（float）、`RandomState`、`NoiseChunk`、`PointCache` |
 | `Worldgen.ts` | 总入口 |
 
@@ -136,3 +141,4 @@ Chunk（16×16×384）
 | `tests/chunk.test.ts` | 位压缩、调色板、贪婪网格、纹理 |
 | `tests/fluid.test.ts` | 流体流动规则、流体表面高度、含水层（原版数据） |
 | `tests/movement.test.ts` | 移动速度、跳跃、飞行、潜行、抬步、碰撞、游泳，对照原版数值 |
+| `tests/biome.test.ts` | 气候参数表、温度 / 草色、地表规则的每种条件、原版数据生成的区块（v4） |

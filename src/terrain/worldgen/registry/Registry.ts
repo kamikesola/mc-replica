@@ -22,7 +22,7 @@ import type { NoiseParameters } from '../noise/NormalNoise'
  *
  * 第二种是直接把 jar 里的 data/minecraft 下的内容拷出来时常见的结构。
  */
-export type WorldgenKind = 'noise' | 'density_function' | 'noise_settings'
+export type WorldgenKind = 'noise' | 'density_function' | 'noise_settings' | 'biome'
 
 export interface ResourceLocation {
   kind: WorldgenKind
@@ -30,12 +30,12 @@ export interface ResourceLocation {
   id: string
 }
 
-const KINDS = 'noise|density_function|noise_settings'
+const KINDS = 'noise|density_function|noise_settings|biome'
 const WITH_NAMESPACE = new RegExp(`(?:^|/)data/([a-z0-9_.-]+)/worldgen/(${KINDS})/(.+)\\.json$`)
 const WITHOUT_NAMESPACE = new RegExp(`(?:^|/)worldgen/(${KINDS})/(.+)\\.json$`)
 
 /**
- * 文件路径 → 资源位置；不是 worldgen 三类文件时返回 null。
+ * 文件路径 → 资源位置；不是这几类 worldgen 文件时返回 null。
  * 先匹配带 data/<命名空间>/ 的写法，匹配不到再按省略写法处理。
  */
 export function resourceFromPath(path: string): ResourceLocation | null {
@@ -56,6 +56,8 @@ export class Registry {
   readonly noise = new Map<string, NoiseParameters>()
   readonly densityFunction = new Map<string, unknown>()
   readonly noiseSettings = new Map<string, Record<string, unknown>>()
+  /** 生物群系（v4）：温度、湿度、颜色 */
+  readonly biome = new Map<string, unknown>()
   /** "kind|id" → 来自哪个数据包。后加载的覆盖先加载的，与原版数据包的优先级规则一致 */
   private readonly source = new Map<string, string>()
 
@@ -88,6 +90,9 @@ export class Registry {
         break
       case 'noise_settings':
         this.noiseSettings.set(id, json as Record<string, unknown>)
+        break
+      case 'biome':
+        this.biome.set(id, json)
         break
     }
   }

@@ -2,6 +2,38 @@
 
 每个版本对应一个 git tag 和一篇文章。数字来自 `tools/` 下的脚本或 `tests/` 里的测试，可以自己复现。
 
+## v4 · 生物群系与地表规则
+
+文章：[docs/articles/v4-生物群系与地表规则.md](docs/articles/v4-生物群系与地表规则.md) · 日志：[docs/notes/v4-notes.md](docs/notes/v4-notes.md)
+
+**新增**
+
+- 生物群系（`terrain/worldgen/biome/`）：原版气候参数表（`OverworldBiomeBuilder`，主世界 7593 项、下界 5 项）、
+  量化与最近项查找（`Climate`）、方块坐标 → 群系的抖动缩放（`BiomeManager`，种子 SHA-256 + LCG，64 位运算用 32 位模拟）
+- 群系 JSON（`worldgen/biome/*.json`）：温度、湿度、冰冻修饰器、草 / 树叶 / 水的颜色、沼泽 / 黑森林修饰器；
+  高处变冷（`PerlinSimplexNoise`，原版写死的种子）
+- 地表规则（`terrain/worldgen/surface/`）：原版 `surface_rule` 的 4 种规则、11 种条件；`SurfaceSystem.buildSurface`
+  逐列应用；恶地陶瓦条纹、侵蚀恶地石柱、冰冻海洋冰山
+- 新方块（含纹理）：砂岩、红沙、红砂岩、雪块、细雪、冰、浮冰、泥巴、菌丝、灰化土、砂土、方解石、陶瓦及 6 种颜色
+- 生物群系颜色：草、树叶、水的纹理改为灰度 + 染色标记；每列颜色取周围 5×5 列平均（原版默认过渡半径），
+  写进三张 512×512 颜色图，着色器按世界坐标取
+- F3 显示 `Biome:`
+- 数据包读取 `worldgen/biome/`；数据包里有 `minecraft:pale_garden` 时按 1.21.4+ 的表放苍白之园
+- 群系参数表已用 1.21.4 服务端导出的 `biome_parameters` 报告核对：主世界 7593 项、下界 5 项逐项一致
+- `tests/biome.test.ts`；`tests/parity.test.ts` 新增种子哈希、BiomeManager、PerlinSimplex、量化、陶瓦条纹 4 组 Java 对拍
+
+**改动**
+
+- 有 `surface_rule` 的 noise_settings 不再用 v0~v3 的临时地表规则（demo 的简化地形仍然用）
+- 物品栏的草、树叶、水图标按平原 / 默认颜色染色
+
+**数据**：原版主世界每个区块生成约 102 ms → 约 121 ms（群系查找 + 地表规则）
+
+**已知问题**
+
+- 没有树、花草、积雪层和冰面（原版是“地物”，v5）
+- 草和树叶的颜色图是用 13 个已知群系颜色拟合的二次多项式（原版颜色图归 Mojang 所有，没放进仓库），这 13 个群系误差 ≤ 2 个色阶
+
 ## v3 · 含水层与流体
 
 文章：[docs/articles/v3-含水层与流体.md](docs/articles/v3-含水层与流体.md) · 日志：[docs/notes/v3-notes.md](docs/notes/v3-notes.md)
@@ -33,7 +65,7 @@
 **已知问题**
 
 - 洞穴没有光照（v6）；岩浆不发光
-- 含水层还没有和游戏本体逐点核对（可以用 `tools/aquifer-probe.ts` 给出的坐标核对）
+- 含水层只核对了两处地下湖（种子 42 的 (11, 14)、(-32, 40)，最上面一格水都是 y = 19，与原版一致）；更多位置可以用 `tools/aquifer-probe.ts` 核对
 
 ## v2 · 20 TPS 原版物理与手感
 

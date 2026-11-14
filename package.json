@@ -10,7 +10,7 @@
     "build": "tsc --noEmit && vite build",
     "build:public": "tsc --noEmit && vite build --mode public",
     "preview": "vite preview",
-    "test": "tsx --test tests/parity.test.ts tests/density.test.ts tests/vanilla.test.ts tests/game.test.ts tests/chunk.test.ts tests/movement.test.ts tests/fluid.test.ts",
+    "test": "tsx --test tests/parity.test.ts tests/density.test.ts tests/vanilla.test.ts tests/game.test.ts tests/chunk.test.ts tests/movement.test.ts tests/fluid.test.ts tests/biome.test.ts",
     "typecheck": "tsc --noEmit",
     "parity": "javac -d tools/parity/out tools/parity/Parity.java && java -cp tools/parity/out Parity > tests/fixtures/parity.json"
   },

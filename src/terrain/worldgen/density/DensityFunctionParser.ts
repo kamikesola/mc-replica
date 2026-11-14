@@ -225,6 +225,10 @@ export interface NoiseSettingsInfo {
   aquifersEnabled: boolean
   /** 海平面以下的默认流体：主世界水，下界岩浆，末地空气 */
   defaultFluid: 'water' | 'lava' | 'air'
+  /** 默认方块（主世界是石头）：密度 > 0 的地方放它，地表规则只替换它 */
+  defaultBlock: string
+  /** 地表规则（v4）：原样保存 JSON，由 surface/SurfaceRules.ts 解析；没有时为 null */
+  surfaceRule: unknown
   router: Partial<Record<RouterField, DensityFunction>>
 }
 
@@ -252,6 +256,8 @@ export function parseNoiseSettings(parser: DensityFunctionParser, id: string): N
     legacyRandomSource: json.legacy_random_source === true,
     aquifersEnabled: json.aquifers_enabled === true,
     defaultFluid: fluidName((json.default_fluid as { Name?: string } | undefined)?.Name),
+    defaultBlock: normalizeId((json.default_block as { Name?: string } | undefined)?.Name ?? 'minecraft:stone'),
+    surfaceRule: json.surface_rule ?? null,
     router
   }
 }

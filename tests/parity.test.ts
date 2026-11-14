@@ -16,6 +16,10 @@ import { BlendedNoise } from '../src/terrain/worldgen/noise/BlendedNoise'
 import { CubicSpline } from '../src/terrain/worldgen/density/CubicSpline'
 import { EndIslands } from '../src/terrain/worldgen/density/DensityFunction'
 import { SimplexNoise } from '../src/terrain/worldgen/noise/SimplexNoise'
+import { PerlinSimplexNoise } from '../src/terrain/worldgen/noise/PerlinSimplexNoise'
+import { BiomeManager, obfuscateSeed } from '../src/terrain/worldgen/biome/BiomeManager'
+import { quantize } from '../src/terrain/worldgen/biome/Climate'
+import { generateBands } from '../src/terrain/worldgen/surface/SurfaceSystem'
 
 const fx = JSON.parse(readFileSync(new URL('./fixtures/parity.json', import.meta.url), 'utf8'))
 const seeds: bigint[] = fx.seeds.map(BigInt)
@@ -167,5 +171,52 @@ test('SimplexNoise 与末地外岛高度（end_islands）', () => {
       ...ep.map(([x, z]) => bits(EndIslands.heightValue(sx, Math.trunc(x / 8), Math.trunc(z / 8))))
     ]
     assert.deepEqual(got, fx.simplex[i])
+  })
+})
+
+// ---------------------------------------------------------------- v4：生物群系
+
+test('生物群系缩放：种子哈希（SHA-256）和 BiomeManager 选中的 quart 坐标', () => {
+  const bp = [
+    [0, 64, 0],
+    [1, 64, 1],
+    [2, 63, 3],
+    [-1, -64, -1],
+    [17, 100, -33],
+    [-1000, 0, 2000],
+    [123457, 70, -654321],
+    [30000000, 300, -29999999]
+  ]
+  seeds.forEach((s, i) => {
+    const zoom = obfuscateSeed(s)
+    const bm = new BiomeManager(zoom, (x, y, z) => JSON.stringify([x, y, z]))
+    assert.deepEqual([zoom.toString(), ...bp.map(([x, y, z]) => JSON.parse(bm.getBiome(x, y, z)))], fx.biome[i])
+  })
+})
+
+test('PerlinSimplexNoise：原版 Biome 里写死种子的三个噪声', () => {
+  const made = [
+    new PerlinSimplexNoise(new LegacyRandomSource(1234n), [0]),
+    new PerlinSimplexNoise(new LegacyRandomSource(3456n), [-2, -1, 0]),
+    new PerlinSimplexNoise(new LegacyRandomSource(2345n), [0])
+  ]
+  made.forEach((n, i) => {
+    assert.deepEqual(
+      points.map(([x, , z]) => bits(n.getValue(x * 0.05, z * 0.05, false))),
+      fx.perlinSimplex[i]
+    )
+  })
+})
+
+test('气候参数量化：(long)(f * 10000.0F)', () => {
+  const fs = [-1.0, -0.93333334, -0.7666667, -0.56666666, -0.45, -0.2225, -0.11, 0.03, 0.05, 0.26666668, 0.55, 1.1, 0.123456, -0.987654]
+  assert.deepEqual(fs.map((f) => String(quantize(f))), fx.quantize)
+})
+
+test('恶地的陶瓦条纹（SurfaceSystem.generateBands）', () => {
+  const short: Record<string, string> = { terracotta: 't', orange_terracotta: 'o', yellow_terracotta: 'y', brown_terracotta: 'b', red_terracotta: 'r', white_terracotta: 'w', light_gray_terracotta: 'g' }
+  seeds.forEach((s, i) => {
+    const bands = generateBands(new XoroshiroRandomSource(s).forkPositional().fromHashOf('minecraft:clay_bands'))
+    assert.equal(bands.map((b) => short[b.replace('minecraft:', '')]).join(''), fx.clayBands[i])
   })
 })

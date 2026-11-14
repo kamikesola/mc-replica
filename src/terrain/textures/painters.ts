@@ -7,6 +7,9 @@
  *
  * 每个画家函数拿到一个 16×16 的画布（RGBA，一行一行从上到下）和一个固定种子的随机数，
  * 所以每次生成的纹理都一模一样。纹理左右、上下都能无缝拼接，因为贪婪网格会把同一张纹理平铺很多次。
+ *
+ * 染色（v4）：草、树叶、水和原版一样画成灰色，显示时乘上生物群系的颜色。
+ * 要染色的像素把 alpha 设成 0（TINT），着色器看到 alpha < 1 就乘颜色；草方块侧面只有上面一圈草是染色的。
  */
 
 export const TEX = 16
@@ -108,7 +111,10 @@ function voronoi(points: number, r: () => number) {
 // ---------------------------------------------------------------- 各个纹理
 
 const DIRT = hex(0x866043)
-const GRASS = hex(0x6aa84f)
+/** 草的灰度底色：乘上平原的草色（#91BD59）后大约是原来的绿色 */
+const GRASS = hex(0xb8b8b8)
+/** 要染色的像素的 alpha */
+const TINT = 0
 
 function stone(c: Canvas, r: () => number) {
   speckle(c, hex(0x7d7d7d), 0.06, r)
@@ -137,10 +143,16 @@ function dirt(c: Canvas, r: () => number) {
   blotches(c, () => shade(DIRT, 1.18), 8, 2, r)
 }
 
+/** 把整张图都标成“要染色” */
+function tintAll(c: Canvas): void {
+  for (let i = 3; i < c.data.length; i += 4) c.data[i] = TINT
+}
+
 function grassTop(c: Canvas, r: () => number) {
   speckle(c, GRASS, 0.1, r)
   blotches(c, () => shade(GRASS, 0.8), 14, 2, r)
   blotches(c, () => shade(GRASS, 1.15), 10, 1, r)
+  tintAll(c)
 }
 
 function grassSide(c: Canvas, r: () => number) {
@@ -148,7 +160,7 @@ function grassSide(c: Canvas, r: () => number) {
   // 上面一圈草，下边缘参差不齐（每一列往下 2~5 格）
   for (let x = 0; x < TEX; x++) {
     const depth = 2 + Math.floor(r() * 3) + (r() < 0.2 ? 1 : 0)
-    for (let y = 0; y < depth; y++) c.set(x, y, shade(GRASS, 0.88 + r() * 0.24))
+    for (let y = 0; y < depth; y++) c.set(x, y, shade(GRASS, 0.88 + r() * 0.24), TINT)
   }
 }
 
@@ -167,12 +179,14 @@ function gravel(c: Canvas, r: () => number) {
 }
 
 function water(c: Canvas, r: () => number) {
-  const base = hex(0x3f76e4)
+  // 灰色，乘上生物群系的水色（海洋 #3F76E4、沼泽 #617B64、暖水海洋 #43D5EE……）
+  const base = hex(0xf0f0f0)
   c.fill((x, y) => {
     // 两组斜向的亮纹，模拟水面的波光；sin 的周期是 16 的约数，所以能无缝拼接
     const w = Math.sin(((x + y * 2) / TEX) * Math.PI * 2) + Math.sin(((x * 2 - y) / TEX) * Math.PI * 2)
     return shade(base, 0.92 + w * 0.05 + (r() - 0.5) * 0.04)
   })
+  tintAll(c)
 }
 
 function bedrock(c: Canvas, r: () => number) {
@@ -228,11 +242,12 @@ function logTop(c: Canvas, r: () => number) {
 }
 
 function leaves(c: Canvas, r: () => number) {
-  const base = hex(0x3f7a2a)
+  const base = hex(0x9a9a9a)
   c.fill(() => {
     const t = r()
     return t < 0.18 ? shade(base, 0.55) : shade(base, 0.85 + r() * 0.35)
   })
+  tintAll(c)
 }
 
 function glowstone(c: Canvas, r: () => number) {
@@ -260,6 +275,96 @@ function obsidian(c: Canvas, r: () => number) {
   blotches(c, () => hex(0x0c0912), 8, 2, r)
 }
 
+// ---------------------------------------------------------------- v4：地表规则用到的方块
+
+/** 砂岩侧面：横向的层，最上面一条亮边 */
+const sandstoneSide = (base: number) => (c: Canvas, r: () => number) => {
+  speckle(c, hex(base), 0.04, r)
+  for (const y of [4, 9, 13]) for (let x = 0; x < TEX; x++) if (r() < 0.8) c.set(x, y, shade(hex(base), 0.88))
+  for (let x = 0; x < TEX; x++) c.set(x, 0, shade(hex(base), 1.06))
+}
+const sandstoneTop = (base: number) => (c: Canvas, r: () => number) => {
+  speckle(c, hex(base), 0.035, r)
+  blotches(c, () => shade(hex(base), 0.93), 8, 2, r)
+}
+const sandLike = (base: number) => (c: Canvas, r: () => number) => {
+  speckle(c, hex(base), 0.05, r)
+  blotches(c, () => shade(hex(base), 0.86), 10, 1, r)
+}
+
+function snow(c: Canvas, r: () => number) {
+  speckle(c, hex(0xf4fafa), 0.025, r)
+  blotches(c, () => hex(0xdfe9ef), 6, 2, r)
+}
+
+function powderSnow(c: Canvas, r: () => number) {
+  speckle(c, hex(0xf7fbfd), 0.02, r)
+  blotches(c, () => hex(0xe7eff4), 10, 3, r)
+}
+
+function ice(c: Canvas, r: () => number) {
+  speckle(c, hex(0x8db4fa), 0.05, r)
+  // 几道白色的裂纹
+  for (let k = 0; k < 3; k++) {
+    let x = Math.floor(r() * TEX)
+    let y = Math.floor(r() * TEX)
+    for (let n = 0; n < 6; n++) {
+      c.set(x, y, hex(0xd8e8ff))
+      x += 1
+      y += r() < 0.5 ? 1 : 0
+    }
+  }
+}
+
+function packedIce(c: Canvas, r: () => number) {
+  const { edge } = voronoi(6, r)
+  c.fill((x, y) => (edge[y * TEX + x] < 0.6 ? hex(0xa9c8f5) : shade(hex(0x8aaee8), 0.96 + r() * 0.08)))
+}
+
+function mud(c: Canvas, r: () => number) {
+  speckle(c, hex(0x3c3a3c), 0.08, r)
+  blotches(c, () => hex(0x4b4446), 10, 3, r)
+}
+
+function myceliumTop(c: Canvas, r: () => number) {
+  speckle(c, hex(0x6f6268), 0.1, r)
+  blotches(c, () => hex(0x8d8287), 12, 2, r)
+  blotches(c, () => hex(0x5a4c55), 8, 2, r)
+}
+
+/** 侧面：土 + 上面一圈别的颜色（菌丝体、灰化土），和草方块侧面一样的形状 */
+const toppedSide = (top: number) => (c: Canvas, r: () => number) => {
+  dirt(c, r)
+  for (let x = 0; x < TEX; x++) {
+    const depth = 2 + Math.floor(r() * 3)
+    for (let y = 0; y < depth; y++) c.set(x, y, shade(hex(top), 0.88 + r() * 0.24))
+  }
+}
+
+function podzolTop(c: Canvas, r: () => number) {
+  speckle(c, hex(0x5b3f1d), 0.1, r)
+  blotches(c, () => hex(0x7a5428), 14, 3, r)
+  blotches(c, () => hex(0x3e2a12), 8, 2, r)
+}
+
+function coarseDirt(c: Canvas, r: () => number) {
+  dirt(c, r)
+  blotches(c, () => shade(hex(0x77553b), 0.7), 14, 2, r)
+  blotches(c, () => hex(0x8a8a8a), 6, 1, r) // 碎石子
+}
+
+function calcite(c: Canvas, r: () => number) {
+  speckle(c, hex(0xdfe0dc), 0.03, r)
+  const { edge } = voronoi(5, r)
+  c.fill((x, y) => (edge[y * TEX + x] < 0.5 ? hex(0xc9cac6) : c.get(x, y)))
+}
+
+/** 陶瓦：几乎是纯色，只有很细的颗粒 */
+const terracotta = (base: number) => (c: Canvas, r: () => number) => {
+  speckle(c, hex(base), 0.03, r)
+  blotches(c, () => shade(hex(base), 0.93), 6, 2, r)
+}
+
 /**
  * 全部纹理，顺序就是纹理数组的层号（layer）。
  * 0 号留空不用：网格里用 0 表示“这里没有面”。
@@ -282,7 +387,30 @@ export const PAINTERS = {
   leaves,
   glowstone,
   lava,
-  obsidian
+  obsidian,
+  sandstone: sandstoneSide(0xd8cb9b),
+  sandstone_top: sandstoneTop(0xdccf9f),
+  red_sand: sandLike(0xbe6621),
+  red_sandstone: sandstoneSide(0xb5621f),
+  red_sandstone_top: sandstoneTop(0xb9652a),
+  snow,
+  powder_snow: powderSnow,
+  ice,
+  packed_ice: packedIce,
+  mud,
+  mycelium_top: myceliumTop,
+  mycelium_side: toppedSide(0x6f6268),
+  podzol_top: podzolTop,
+  podzol_side: toppedSide(0x6a4a22),
+  coarse_dirt: coarseDirt,
+  calcite,
+  terracotta: terracotta(0x985e43),
+  white_terracotta: terracotta(0xd1b2a1),
+  orange_terracotta: terracotta(0xa15325),
+  yellow_terracotta: terracotta(0xba8523),
+  brown_terracotta: terracotta(0x4d3323),
+  red_terracotta: terracotta(0x8f3d2e),
+  light_gray_terracotta: terracotta(0x876a61)
 } satisfies Record<string, (c: Canvas, r: () => number) => void>
 
 export type TextureName = keyof typeof PAINTERS
@@ -308,3 +436,21 @@ export function paintAll(): Uint8Array<ArrayBuffer> {
   })
   return out
 }
+
+/** 染色种类（顶点里存的值）：0 不染色，1 草，2 树叶，3 水 */
+export const enum Tint {
+  none = 0,
+  grass = 1,
+  foliage = 2,
+  water = 3
+}
+
+/** 纹理层号 → 染色种类 */
+export const TINT_BY_LAYER: Uint8Array = (() => {
+  const t = new Uint8Array(TEXTURE_COUNT)
+  t[TEXTURE_LAYER.grass_top] = Tint.grass
+  t[TEXTURE_LAYER.grass_side] = Tint.grass
+  t[TEXTURE_LAYER.leaves] = Tint.foliage
+  t[TEXTURE_LAYER.water] = Tint.water
+  return t
+})()

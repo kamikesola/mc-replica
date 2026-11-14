@@ -25,8 +25,28 @@ export enum BlockType {
   glowstone = 13,
   obsidian = 14,
   /** 岩浆源 */
-  lava = 15
+  lava = 15,
   // 16..22 流动的水（量 1..7），23 下落的水；24..30 流动的岩浆，31 下落的岩浆
+  // v4：地表规则用到的方块
+  sandstone = 32,
+  red_sand = 33,
+  red_sandstone = 34,
+  snow_block = 35,
+  powder_snow = 36,
+  ice = 37,
+  packed_ice = 38,
+  mud = 39,
+  mycelium = 40,
+  podzol = 41,
+  coarse_dirt = 42,
+  calcite = 43,
+  terracotta = 44,
+  white_terracotta = 45,
+  orange_terracotta = 46,
+  yellow_terracotta = 47,
+  brown_terracotta = 48,
+  red_terracotta = 49,
+  light_gray_terracotta = 50
 }
 
 // ---------------------------------------------------------------- 流体状态
@@ -117,6 +137,70 @@ for (let a = 1; a <= 7; a++) BLOCKS[FLOW_BASE[FluidKind.water] + a - 1] = fluid(
 BLOCKS[FLOW_BASE[FluidKind.water] + 7] = fluid('水（下落）', 'water')
 for (let a = 1; a <= 7; a++) BLOCKS[FLOW_BASE[FluidKind.lava] + a - 1] = fluid(`岩浆（流动 ${a}）`, 'lava')
 BLOCKS[FLOW_BASE[FluidKind.lava] + 7] = fluid('岩浆（下落）', 'lava')
+BLOCKS.push(
+  block('砂岩', 'sandstone_top', 'sandstone'),
+  block('红沙', 'red_sand'),
+  block('红砂岩', 'red_sandstone_top', 'red_sandstone'),
+  block('雪块', 'snow'),
+  block('细雪', 'powder_snow'),
+  block('冰', 'ice'),
+  block('浮冰', 'packed_ice'),
+  block('泥巴', 'mud'),
+  block('菌丝体', 'mycelium_top', 'mycelium_side', 'dirt'),
+  block('灰化土', 'podzol_top', 'podzol_side', 'dirt'),
+  block('砂土', 'coarse_dirt'),
+  block('方解石', 'calcite'),
+  block('陶瓦', 'terracotta'),
+  block('白色陶瓦', 'white_terracotta'),
+  block('橙色陶瓦', 'orange_terracotta'),
+  block('黄色陶瓦', 'yellow_terracotta'),
+  block('棕色陶瓦', 'brown_terracotta'),
+  block('红色陶瓦', 'red_terracotta'),
+  block('淡灰色陶瓦', 'light_gray_terracotta')
+)
+
+/**
+ * 原版方块名 → 方块 ID（地表规则、含水层给出的是原版名字）。
+ * 原版有、这里还没有的方块，先用外观最接近的代替。
+ */
+export const BLOCK_BY_NAME: Record<string, BlockType> = {
+  'minecraft:air': BlockType.air,
+  'minecraft:stone': BlockType.stone,
+  'minecraft:deepslate': BlockType.deepslate,
+  'minecraft:dirt': BlockType.dirt,
+  'minecraft:grass_block': BlockType.grass,
+  'minecraft:sand': BlockType.sand,
+  'minecraft:gravel': BlockType.gravel,
+  'minecraft:water': BlockType.water,
+  'minecraft:lava': BlockType.lava,
+  'minecraft:bedrock': BlockType.bedrock,
+  'minecraft:obsidian': BlockType.obsidian,
+  'minecraft:sandstone': BlockType.sandstone,
+  'minecraft:red_sand': BlockType.red_sand,
+  'minecraft:red_sandstone': BlockType.red_sandstone,
+  'minecraft:snow_block': BlockType.snow_block,
+  'minecraft:powder_snow': BlockType.powder_snow,
+  'minecraft:ice': BlockType.ice,
+  'minecraft:packed_ice': BlockType.packed_ice,
+  'minecraft:mud': BlockType.mud,
+  'minecraft:mycelium': BlockType.mycelium,
+  'minecraft:podzol': BlockType.podzol,
+  'minecraft:coarse_dirt': BlockType.coarse_dirt,
+  'minecraft:calcite': BlockType.calcite,
+  'minecraft:terracotta': BlockType.terracotta,
+  'minecraft:white_terracotta': BlockType.white_terracotta,
+  'minecraft:orange_terracotta': BlockType.orange_terracotta,
+  'minecraft:yellow_terracotta': BlockType.yellow_terracotta,
+  'minecraft:brown_terracotta': BlockType.brown_terracotta,
+  'minecraft:red_terracotta': BlockType.red_terracotta,
+  'minecraft:light_gray_terracotta': BlockType.light_gray_terracotta
+}
+
+/** 方块 ID → 原版方块名（地表规则读方块时用） */
+export const NAME_BY_BLOCK: string[] = []
+for (const [name, b] of Object.entries(BLOCK_BY_NAME)) NAME_BY_BLOCK[b] = name
+for (let b = 16; b <= 23; b++) NAME_BY_BLOCK[b] = 'minecraft:water'
+for (let b = 24; b <= 31; b++) NAME_BY_BLOCK[b] = 'minecraft:lava'
 
 /** 方块种类数（含所有流体状态） */
 export const BLOCK_COUNT = BLOCKS.length

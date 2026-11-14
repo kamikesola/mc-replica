@@ -26,6 +26,7 @@ public class Parity {
     long nextLong();
     double nextDouble();
     float nextFloat();
+    boolean nextBoolean();
     void consumeCount(int n);
     PositionalRandomFactory forkPositional();
   }
@@ -58,6 +59,7 @@ public class Parity {
     public long nextLong() { int i = next(32); int j = next(32); return ((long) i << 32) + (long) j; }
     public double nextDouble() { int i = next(26); int j = next(27); long l = ((long) i << 27) + (long) j; return (double) l * (double) 1.110223E-16F; }
     public float nextFloat() { return (float) next(24) * 5.9604645E-8F; }
+    public boolean nextBoolean() { return next(1) != 0; }
     public void consumeCount(int n) { for (int i = 0; i < n; i++) nextInt(); }
     public PositionalRandomFactory forkPositional() {
       long s = nextLong();
@@ -121,6 +123,7 @@ public class Parity {
     public long nextLong() { return rawNext(); }
     public double nextDouble() { return (double) nextBits(53) * (double) 1.110223E-16F; }
     public float nextFloat() { return (float) nextBits(24) * 5.9604645E-8F; }
+    public boolean nextBoolean() { return (rawNext() & 1L) != 0L; }
     public void consumeCount(int n) { for (int i = 0; i < n; i++) rawNext(); }
     public PositionalRandomFactory forkPositional() {
       long sl = rawNext(), sh = rawNext();
@@ -342,6 +345,52 @@ public class Parity {
 
   // ---------------------------------------------------------------- output
 
+  // ---------------------------------------------------------------- v4：生物群系
+  /** BiomeManager.obfuscateSeed：Guava Hashing.sha256().hashLong(seed).asLong()（小端写入，小端读出前 8 字节） */
+  static long obfuscateSeed(long seed) throws Exception {
+    java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+    byte[] h = md.digest(java.nio.ByteBuffer.allocate(8).order(java.nio.ByteOrder.LITTLE_ENDIAN).putLong(seed).array());
+    return java.nio.ByteBuffer.wrap(h, 0, 8).order(java.nio.ByteOrder.LITTLE_ENDIAN).getLong();
+  }
+  static long lcgNext(long a, long b) { a *= a * 6364136223846793005L + 1442695040888963407L; return a + b; }
+  static double getFiddle(long l) { double d = (double) Math.floorMod(l >> 24, 1024) / 1024.0; return (d - 0.5) * 0.9; }
+  static double fiddledDistance(long l, int i, int j, int k, double d, double e, double f) {
+    long m = lcgNext(l, i); m = lcgNext(m, j); m = lcgNext(m, k); m = lcgNext(m, i); m = lcgNext(m, j); m = lcgNext(m, k);
+    double g = getFiddle(m); m = lcgNext(m, l); double h = getFiddle(m); m = lcgNext(m, l); double n = getFiddle(m);
+    return (f + n) * (f + n) + (e + h) * (e + h) + (d + g) * (d + g);
+  }
+  /** BiomeManager.getBiome 选中的 quart 坐标 */
+  static int[] zoom(long seed, int x, int y, int z) {
+    int i = x - 2, j = y - 2, k = z - 2, l = i >> 2, m = j >> 2, n = k >> 2;
+    double d = (double) (i & 3) / 4.0, e = (double) (j & 3) / 4.0, f = (double) (k & 3) / 4.0;
+    int o = 0; double g = Double.POSITIVE_INFINITY;
+    for (int p = 0; p < 8; ++p) {
+      boolean b1 = (p & 4) == 0, b2 = (p & 2) == 0, b3 = (p & 1) == 0;
+      double v = fiddledDistance(seed, b1 ? l : l + 1, b2 ? m : m + 1, b3 ? n : n + 1, b1 ? d : d - 1.0, b2 ? e : e - 1.0, b3 ? f : f - 1.0);
+      if (g > v) { o = p; g = v; }
+    }
+    return new int[]{(o & 4) == 0 ? l : l + 1, (o & 2) == 0 ? m : m + 1, (o & 1) == 0 ? n : n + 1};
+  }
+  /** PerlinSimplexNoise（只实现最高倍频为 0 的情况） */
+  static final class PerlinSimplex {
+    final Simplex[] levels; final double inF, valF;
+    PerlinSimplex(RandomSource r, int[] octaves) {
+      java.util.TreeSet<Integer> set = new java.util.TreeSet<>(); for (int o : octaves) set.add(o);
+      int i = -set.first(), j = set.last(), k = i + j + 1;
+      Simplex first = new Simplex(r);
+      int l = j; levels = new Simplex[k];
+      if (l >= 0 && l < k && set.contains(0)) levels[l] = first;
+      for (int m = l + 1; m < k; ++m) { if (m >= 0 && set.contains(l - m)) levels[m] = new Simplex(r); else r.consumeCount(262); }
+      inF = Math.pow(2.0, j); valF = 1.0 / (Math.pow(2.0, k) - 1.0);
+    }
+    double getValue(double x, double z) {
+      double d = 0, e = inF, f = valF;
+      for (Simplex s : levels) { if (s != null) d += s.getValue(x * e, z * e) * f; e /= 2.0; f *= 2.0; }
+      return d;
+    }
+  }
+  static long quantize(float f) { return (long) (f * 10000.0F); }
+
   static final StringBuilder out = new StringBuilder();
   static boolean firstEntry = true;
 
@@ -477,6 +526,57 @@ public class Parity {
       List<String> xs = new ArrayList<>();
       double[] inputs = {-2.0, -1.1, -1.05, -0.6, -0.17, -0.155, 0.0, 0.031, 0.5, 1.0, 3.0, 0.123456789};
       for (double in : inputs) xs.add("[" + d(in) + "," + d((double) spline((float) in, loc, val, der)) + "]");
+      out.append(list(xs));
+    }
+
+    key("biome"); {
+      List<String> xs = new ArrayList<>();
+      for (long sd : SEEDS) {
+        List<String> ys = new ArrayList<>();
+        long z = 0;
+        try { z = obfuscateSeed(sd); } catch (Exception ex) { throw new RuntimeException(ex); }
+        ys.add(L(z));
+        int[][] bp = {{0, 64, 0}, {1, 64, 1}, {2, 63, 3}, {-1, -64, -1}, {17, 100, -33}, {-1000, 0, 2000}, {123457, 70, -654321}, {30000000, 300, -29999999}};
+        for (int[] p : bp) { int[] q = zoom(z, p[0], p[1], p[2]); ys.add("[" + q[0] + "," + q[1] + "," + q[2] + "]"); }
+        xs.add(list(ys));
+      }
+      out.append(list(xs));
+    }
+
+    key("perlinSimplex"); {
+      // 原版 Biome 的三个写死种子的噪声：TEMPERATURE(1234,[0])、FROZEN_TEMPERATURE(3456,[-2,-1,0])、BIOME_INFO(2345,[0])
+      long[] seeds = {1234L, 3456L, 2345L};
+      int[][] octs = {{0}, {-2, -1, 0}, {0}};
+      List<String> xs = new ArrayList<>();
+      for (int t = 0; t < 3; t++) {
+        PerlinSimplex n = new PerlinSimplex(new Legacy(seeds[t]), octs[t]);
+        List<String> ys = new ArrayList<>();
+        for (double[] p : POINTS) ys.add(d(n.getValue(p[0] * 0.05, p[2] * 0.05)));
+        xs.add(list(ys));
+      }
+      out.append(list(xs));
+    }
+
+    key("quantize"); {
+      float[] fs = {-1.0F, -0.93333334F, -0.7666667F, -0.56666666F, -0.45F, -0.2225F, -0.11F, 0.03F, 0.05F, 0.26666668F, 0.55F, 1.1F, 0.123456F, -0.987654F};
+      List<String> xs = new ArrayList<>();
+      for (float f : fs) xs.add(L(quantize(f)));
+      out.append(list(xs));
+    }
+
+    key("clayBands"); {
+      // SurfaceSystem.generateBands：XoroshiroRandomSource(seed).forkPositional().fromHashOf("minecraft:clay_bands") 抽出来的随机数序列
+      List<String> xs = new ArrayList<>();
+      for (long sd : SEEDS) {
+        RandomSource r = new Xoroshiro(sd).forkPositional().fromHashOf("minecraft:clay_bands");
+        String[] bs = new String[192]; java.util.Arrays.fill(bs, "t");
+        for (int i = 0; i < bs.length; ++i) { i += r.nextInt(5) + 1; if (i < bs.length) bs[i] = "o"; }
+        String[][] specs = {{"1", "y"}, {"2", "b"}, {"1", "r"}};
+        for (String[] sp : specs) { int base = Integer.parseInt(sp[0]); int j = r.nextInt(10) + 6; for (int k = 0; k < j; ++k) { int l = base + r.nextInt(3); int m = r.nextInt(bs.length); for (int n = 0; m + n < bs.length && n < l; ++n) bs[m + n] = sp[1]; } }
+        int j = r.nextInt(7) + 9; int k = 0;
+        for (int l = 0; k < j && l < bs.length; l += r.nextInt(16) + 4) { bs[l] = "w"; if (l - 1 > 0 && r.nextBoolean()) bs[l - 1] = "g"; if (l + 1 < bs.length && r.nextBoolean()) bs[l + 1] = "g"; ++k; }
+        xs.add("\"" + String.join("", bs) + "\"");
+      }
       out.append(list(xs));
     }
 

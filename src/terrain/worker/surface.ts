@@ -1,7 +1,7 @@
-import { BLOCK_BITS, BlockType } from '../blocks'
+import { BLOCK_BITS, BLOCK_BY_NAME, BlockType, NAME_BY_BLOCK } from '../blocks'
 import PalettedContainer, { type PalettedData } from '../chunk/PalettedContainer'
 import { meshSection, N, nIndex, type MeshOptions, type SectionMesh } from '../mesh/mesher'
-import { type Aquifer, Fluid, NoiseChunk, type NoiseSettingsInfo, type Worldgen } from '../worldgen'
+import { type Aquifer, Fluid, foliageColor, grassColor, NoiseChunk, type NoiseSettingsInfo, type Worldgen } from '../worldgen'
 
 /**
  * 生成一个区块：密度 → 方块 → 网格。
@@ -87,7 +87,97 @@ export function generateChunk(
     { x0: wx0, x1: wx0 + W, z0: wz0, z1: wz0 + W }
   )
 
-  // ---- 2. 临时地表规则（逐列）
+  // ---- 2. 地表：有原版 surface_rule 就用原版规则（v4），否则用临时规则
+  const surface = wg.surfaceSystem(settingsId)
+  const biomes = wg.biomes(settingsId)
+  // 方块位置 → 生物群系（BiomeManager 要算 64 位整数，按位置缓存）
+  const biomeMemo = new Map<number, string>()
+  const biomeAt = (x: number, y: number, z: number) => {
+    const k = ((x - wx0 + 4) * 64 + (z - wz0 + 4)) * 1024 + (y - minY)
+    let b = biomeMemo.get(k)
+    if (b === undefined) biomeMemo.set(k, (b = biomes.getBiome(x, y, z)))
+    return b
+  }
+  // 每一列最高的非空气方块（原版 WORLD_SURFACE_WG 高度图）
+  const heights = new Int32Array(W * W)
+  for (let pz = 0; pz < W; pz++)
+    for (let px = 0; px < W; px++) {
+      let y = minY + H - 1
+      while (y >= minY && padded[pidx(px, y, pz)] === BlockType.air) y--
+      heights[pz * W + px] = y
+    }
+  if (surface) {
+    surface.buildSurface({
+      chunkX: cx,
+      chunkZ: cz,
+      minY,
+      height: H,
+      column: (lx, lz) => ({
+        get: (y) => (y < minY || y >= minY + H ? 'minecraft:air' : NAME_BY_BLOCK[padded[pidx(lx + PAD, y, lz + PAD)]]),
+        set: (y, name) => {
+          if (y < minY || y >= minY + H) return
+          padded[pidx(lx + PAD, y, lz + PAD)] = BLOCK_BY_NAME[name] ?? BlockType.stone
+          // 原版 ProtoChunk.setBlockState 会更新高度图：侵蚀恶地的石柱放下去以后，这一列的地表从柱顶开始算
+          const h = (lz + PAD) * W + lx + PAD
+          if (name !== 'minecraft:air' && y > heights[h]) heights[h] = y
+        }
+      }),
+      heightAt: (lx, lz) => heights[(lz + PAD) * W + lx + PAD],
+      biome: biomeAt,
+      coldEnoughToSnow: (b, x, y, z) => biomes.coldEnoughToSnow(b, x, y, z),
+      warmerThan01: (b, x, y, z) => biomes.temperature(b, x, y, z) > Math.fround(0.1),
+      preliminarySurfaceLevel: wg.preliminarySurface(settingsId)
+    })
+  } else {
+    temporarySurface(padded, pidx, wx0, wz0, minY, H, sea)
+  }
+
+  // ---- 2.5 每一列草、树叶、水的颜色（v4）：周围 5×5 列的生物群系颜色取平均（原版默认的“生物群系过渡”半径 2）
+  const tints = biomeTints(wg, cx, cz, (x, z) => {
+    // 这一列用最近的区块内的列的地表高度
+    const lx = Math.min(15, Math.max(0, x - cx * 16))
+    const lz = Math.min(15, Math.max(0, z - cz * 16))
+    return biomeAt(x, Math.max(minY, heights[(lz + PAD) * W + lx + PAD]), z)
+  })
+
+
+  // ---- 3. 切成 section：压缩 + 生成网格
+  const sectionCount = H >> 4
+  const sections: PalettedData[] = []
+  const meshes: SectionMeshes[] = []
+  const values = new Uint8Array(4096)
+  const hood = new Uint8Array(N * N * N) // 18³ 邻域，给网格生成用
+  const at = (px: number, y: number, pz: number) => (y < minY || y >= minY + H ? BlockType.air : padded[pidx(px, y, pz)])
+
+  for (let sy = 0; sy < sectionCount; sy++) {
+    const y0 = minY + sy * 16
+    // 中间 16³ → 调色板容器（段内下标 (y*16+z)*16+x）
+    for (let ly = 0; ly < 16; ly++)
+      for (let lz = 0; lz < 16; lz++)
+        for (let lx = 0; lx < 16; lx++) values[(ly * 16 + lz) * 16 + lx] = padded[pidx(lx + PAD, y0 + ly, lz + PAD)]
+    const container = PalettedContainer.fromValues(values, BLOCK_BITS)
+    sections.push(container.toData())
+
+    // 整段都是空气：没有任何面，跳过网格
+    if (container.isSingle && container.palette[0] === BlockType.air) {
+      meshes.push(null)
+      continue
+    }
+    for (let ly = -1; ly <= 16; ly++)
+      for (let lz = -1; lz <= 16; lz++)
+        for (let lx = -1; lx <= 16; lx++) hood[nIndex(lx, ly, lz)] = at(lx + PAD, y0 + ly, lz + PAD)
+    const m = meshSection(hood, opts)
+    meshes.push(m.opaque.indices.length + m.water.indices.length > 0 ? m : null)
+  }
+
+  return { cx, cz, sections, meshes, fluidUpdates: Int32Array.from(fluidUpdates), tints, ms: performance.now() - t0 }
+}
+
+/**
+ * v0~v3 的临时地表规则，现在只给没有 surface_rule 的 noise_settings（demo 的简化地形）用：
+ * 水下是沙 / 沙砾，海边是沙滩，其他是草 + 3 层土；y < 0 深板岩（0..7 过渡），最底下几层基岩。
+ */
+function temporarySurface(padded: Uint8Array, pidx: (px: number, y: number, pz: number) => number, wx0: number, wz0: number, minY: number, H: number, sea: number) {
   for (let pz = 0; pz < W; pz++) {
     for (let px = 0; px < W; px++) {
       const wx = wx0 + px
@@ -127,35 +217,43 @@ export function generateChunk(
       }
     }
   }
+}
 
-  // ---- 3. 切成 section：压缩 + 生成网格
-  const sectionCount = H >> 4
-  const sections: PalettedData[] = []
-  const meshes: SectionMeshes[] = []
-  const values = new Uint8Array(4096)
-  const hood = new Uint8Array(N * N * N) // 18³ 邻域，给网格生成用
-  const at = (px: number, y: number, pz: number) => (y < minY || y >= minY + H ? BlockType.air : padded[pidx(px, y, pz)])
-
-  for (let sy = 0; sy < sectionCount; sy++) {
-    const y0 = minY + sy * 16
-    // 中间 16³ → 调色板容器（段内下标 (y*16+z)*16+x）
-    for (let ly = 0; ly < 16; ly++)
-      for (let lz = 0; lz < 16; lz++)
-        for (let lx = 0; lx < 16; lx++) values[(ly * 16 + lz) * 16 + lx] = padded[pidx(lx + PAD, y0 + ly, lz + PAD)]
-    const container = PalettedContainer.fromValues(values, BLOCK_BITS)
-    sections.push(container.toData())
-
-    // 整段都是空气：没有任何面，跳过网格
-    if (container.isSingle && container.palette[0] === BlockType.air) {
-      meshes.push(null)
-      continue
+/** 每一列草 / 树叶 / 水的颜色：5×5 列取平均，结果是 16×16×3 种×RGB */
+function biomeTints(wg: Worldgen, cx: number, cz: number, biomeOf: (x: number, z: number) => string): Uint8Array {
+  const R = 2
+  const S = 16 + R * 2
+  const colors = new Int32Array(S * S * 3)
+  for (let dz = 0; dz < S; dz++) {
+    for (let dx = 0; dx < S; dx++) {
+      const x = cx * 16 - R + dx
+      const z = cz * 16 - R + dz
+      const b = wg.biome(biomeOf(x, z))
+      const i = (dz * S + dx) * 3
+      colors[i] = grassColor(b, x, z)
+      colors[i + 1] = foliageColor(b)
+      colors[i + 2] = b.waterColor
     }
-    for (let ly = -1; ly <= 16; ly++)
-      for (let lz = -1; lz <= 16; lz++)
-        for (let lx = -1; lx <= 16; lx++) hood[nIndex(lx, ly, lz)] = at(lx + PAD, y0 + ly, lz + PAD)
-    const m = meshSection(hood, opts)
-    meshes.push(m.opaque.indices.length + m.water.indices.length > 0 ? m : null)
   }
-
-  return { cx, cz, sections, meshes, fluidUpdates: Int32Array.from(fluidUpdates), ms: performance.now() - t0 }
+  const out = new Uint8Array(16 * 16 * 9)
+  const n = (2 * R + 1) * (2 * R + 1)
+  for (let lz = 0; lz < 16; lz++)
+    for (let lx = 0; lx < 16; lx++)
+      for (let k = 0; k < 3; k++) {
+        let r = 0
+        let g = 0
+        let b = 0
+        for (let dz = -R; dz <= R; dz++)
+          for (let dx = -R; dx <= R; dx++) {
+            const c = colors[((lz + R + dz) * S + (lx + R + dx)) * 3 + k]
+            r += (c >> 16) & 255
+            g += (c >> 8) & 255
+            b += c & 255
+          }
+        const o = ((lz * 16 + lx) * 3 + k) * 3
+        out[o] = Math.floor(r / n)
+        out[o + 1] = Math.floor(g / n)
+        out[o + 2] = Math.floor(b / n)
+      }
+  return out
 }

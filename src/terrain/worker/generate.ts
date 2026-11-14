@@ -48,7 +48,7 @@ const handlers: { [M in Method]: Handler<M> } = {
     if (!settings) throw new Error('还没有 init')
     const r = generateChunk(wg, settingsId, settings, p.cx, p.cz, { greedy: p.greedy })
     // 所有数组的底层内存直接“转移”给主线程，不复制
-    const buffers: ArrayBufferLike[] = [r.fluidUpdates.buffer]
+    const buffers: ArrayBufferLike[] = [r.fluidUpdates.buffer, r.tints.buffer]
     for (const s of r.sections) if (s.data) buffers.push(s.data.buffer)
     for (const m of r.meshes) {
       if (!m) continue
@@ -77,7 +77,8 @@ const handlers: { [M in Method]: Handler<M> } = {
       parts.push(`${label}: ${fmt(v)}`)
       if (label === 'W') parts.push(`PV: ${fmt(peaksAndValleys(v))}`) // F3 里的 PV 是拿 W 现算的
     }
-    return [{ line: 'NoiseRouter ' + parts.join(' ') }, []]
+    // 生物群系：和原版 F3 的 "Biome: minecraft:plains" 一样，是脚下这个方块位置的群系
+    return [{ line: 'NoiseRouter ' + parts.join(' '), biome: wg.biomes(settingsId).getBiome(p.x, p.y, p.z) }, []]
   },
 
   slice(wg, p) {

@@ -1,5 +1,5 @@
 import { FACE_TEXTURES, FLUID_KIND, FLUIDS, FluidKind, SOLID } from '../blocks'
-import { TEXTURE_LAYER } from '../textures/painters'
+import { TEXTURE_LAYER, TINT_BY_LAYER } from '../textures/painters'
 
 /**
  * 网格生成（v1：贪婪网格）。输入一个 section（16³）连同四周一圈邻居，输出三角形。
@@ -37,7 +37,7 @@ export const nIndex = (x: number, y: number, z: number) => ((y + 1) * N + (z + 1
 /**
  * 一个 section 的网格数据。为了省显存，每个顶点只有 10 个字节：
  *   positions  Uint16 ×3   section 内的坐标 × 256（流体表面的高度不是整数格，1/256 格的精度足够）
- *   info       Uint8  ×4   [面的方向 0..5, 纹理层号, AO 等级 0..3, 未用]
+ *   info       Uint8  ×4   [面的方向 0..5, 纹理层号, AO 等级 0..3, 染色种类（v4：0 无 / 1 草 / 2 树叶 / 3 水）]
  * 纹理坐标、明暗都在着色器里根据这两项算出来（见 materials.ts）。
  * v0 每个顶点是 6 个 float（位置 + 颜色）= 24 字节。
  */
@@ -90,7 +90,7 @@ class Builder {
     const n = this.vertices
     for (let i = 0; i < 4; i++) {
       this.pos.set([corners[i * 3], corners[i * 3 + 1], corners[i * 3 + 2]], (n + i) * 3)
-      this.inf.set([face, layer, ao[i], 0], (n + i) * 4)
+      this.inf.set([face, layer, ao[i], TINT_BY_LAYER[layer]], (n + i) * 4)
     }
     // 两个三角形。positive：从外面看是逆时针（three.js 默认只画正面）。
     // flip：沿另一条对角线切，让 AO 的过渡更自然（见 README 里 0fps 的文章）

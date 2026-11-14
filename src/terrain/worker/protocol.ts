@@ -29,6 +29,8 @@ export interface ChunkData {
   meshes: SectionMeshes[]
   /** 区块加载后要马上更新一次的流体（区块内编号，见 Chunk.index），让含水层边上的水流进洞里 */
   fluidUpdates: Int32Array
+  /** 每一列草 / 树叶 / 水的颜色（v4）：[(lz*16+lx)*3 + 种类]*3 + RGB，种类 0 草 1 树叶 2 水 */
+  tints: Uint8Array
   ms: number
 }
 
@@ -38,7 +40,7 @@ export interface Requests {
   /** 生成一个区块：方块 + 网格。greedy=false 时不合并面（对比用） */
   chunk: [{ cx: number; cz: number; greedy: boolean }, ChunkData]
   /** F3 调试屏的 NoiseRouter 一行 */
-  f3: [{ x: number; y: number; z: number }, { line: string }]
+  f3: [{ x: number; y: number; z: number }, { line: string; biome: string }]
   /** 噪声图面板：以 (cx, cz) 为中心采一张 size×size 的俯视图 */
   slice: [{ field: string; cx: number; cy: number; cz: number; size: number; step: number }, { values: Float32Array; min: number; max: number }]
 }

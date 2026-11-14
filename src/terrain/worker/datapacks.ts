@@ -9,7 +9,7 @@ import type { PackInput } from '../worldgen'
  *      datapacks/vanilla/data/minecraft/worldgen/...   （标准数据包结构）
  *
  * 后加载的覆盖先加载的：放了原版数据后，minecraft:* 自动换成真正的原版定义。
- * 只匹配 noise / density_function / noise_settings 三个目录，别的文件不会被打包进页面。
+ * 只匹配 noise / density_function / noise_settings / biome 四个目录，别的文件不会被打包进页面。
  */
 
 // 自带数据很小，打包时直接内联
@@ -24,8 +24,8 @@ const user: Record<string, () => Promise<unknown>> =
   import.meta.env.MODE === 'public'
     ? {}
     : {
-        ...import.meta.glob('/datapacks/*/worldgen/{noise,density_function,noise_settings}/**/*.json', { import: 'default' }),
-        ...import.meta.glob('/datapacks/*/data/*/worldgen/{noise,density_function,noise_settings}/**/*.json', {
+        ...import.meta.glob('/datapacks/*/worldgen/{noise,density_function,noise_settings,biome}/**/*.json', { import: 'default' }),
+        ...import.meta.glob('/datapacks/*/data/*/worldgen/{noise,density_function,noise_settings,biome}/**/*.json', {
           import: 'default'
         })
       }

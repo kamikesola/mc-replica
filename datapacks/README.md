@@ -14,6 +14,7 @@ datapacks/
       noise/...
       density_function/...
       noise_settings/...
+      biome/...               ← v4：生物群系的温度、湿度、颜色
 ```
 
 ```text
@@ -28,8 +29,19 @@ datapacks/
 3. 重启 `npm run dev`。菜单上会显示当前用的 noise_settings，
    菜单的“世界设置”里会出现 `minecraft:overworld` 等 7 个原版 noise_settings。
 
-只读取 `noise`、`density_function`、`noise_settings` 三个子目录，其他目录（biome、structure……）会被忽略，
+只读取 `noise`、`density_function`、`noise_settings`、`biome`（v4 起）四个子目录，其他目录（structure、configured_feature……）会被忽略，
 也不会被打包进页面。
+
+## 核对生物群系（可选）
+
+原版服务端可以导出主世界的气候参数表：
+
+```text
+java -DbundlerMainClass=net.minecraft.data.Main -jar server.jar --reports
+```
+
+把生成的 `generated/reports/biome_parameters/` 拷到 `datapacks/reports/biome_parameters/`，
+`npm test` 会把 v4 手抄的参数表和它逐项比较（没有就跳过）。
 
 ## 自己写数据包
 

@@ -9,7 +9,7 @@ import Chunk from '../src/terrain/chunk/Chunk'
 import PalettedContainer from '../src/terrain/chunk/PalettedContainer'
 import Section from '../src/terrain/chunk/Section'
 import { meshSection, N, nIndex, POSITION_SCALE, type SectionMesh } from '../src/terrain/mesh/mesher'
-import { paintAll, TEXTURE_COUNT } from '../src/terrain/textures/painters'
+import { paintAll, TEXTURE_COUNT, TINT_BY_LAYER } from '../src/terrain/textures/painters'
 
 /** 和 Math.random 无关的固定随机数，测试结果每次一样 */
 function rand(seed: number) {
@@ -202,7 +202,8 @@ test('纹理：每个方块每个面都指向一张存在的纹理', () => {
     for (let f = 0; f < 6; f++) {
       const layer = FACE_TEXTURES[b * 6 + f]
       assert.ok(layer >= 1 && layer < TEXTURE_COUNT)
-      assert.equal(pixels[(layer * 256 + 0) * 4 + 3], 255) // 不透明
+      // 不染色的纹理 alpha 都是 255；草、树叶、水的染色部分 alpha 是 0（见 painters.ts）
+      if (TINT_BY_LAYER[layer] === 0) assert.equal(pixels[(layer * 256 + 0) * 4 + 3], 255)
     }
   }
   assert.deepEqual(paintAll(), pixels) // 每次画出来都一样

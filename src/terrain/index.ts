@@ -107,6 +107,7 @@ export default class Terrain {
   update = () => {
     if (!this.info) return
     this.flushRemesh()
+    this.materials.flushTints()
     const pcx = Math.floor(this.camera.position.x / CHUNK_SIZE)
     const pcz = Math.floor(this.camera.position.z / CHUNK_SIZE)
 
@@ -162,6 +163,7 @@ export default class Terrain {
     const key = `${data.cx},${data.cz}`
     this.chunks.set(key, chunk)
     this.lastChunkMs = data.ms
+    this.materials.writeTints(data.cx, data.cz, data.tints)
 
     const edits = this.edits.get(key)
     if (edits && edits.size > 0) {

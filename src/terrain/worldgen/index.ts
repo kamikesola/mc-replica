@@ -12,7 +12,7 @@
  *
  * 一般只需要从这里导入 Worldgen；写测试或文章示例时也可以单独导入某一层。
  */
-export { Worldgen, type PackInput } from './Worldgen'
+export { BiomeSource, Worldgen, type PackInput } from './Worldgen'
 export { encodeKey, parseKey, describeKey, type FunctionKey } from './FunctionKey'
 export { NoiseChunk, type Region } from './density/NoiseChunk'
 export { withPointCache } from './density/PointCache'
@@ -25,3 +25,4 @@ export { parseWorldSeed } from './math/Mth'
 export { LegacyRandomSource } from './random/LegacyRandomSource'
 export { XoroshiroRandomSource } from './random/XoroshiroRandomSource'
 export { NormalNoise } from './noise/NormalNoise'
+export { type BiomeData, foliageColor, grassColor } from './biome/Biome'

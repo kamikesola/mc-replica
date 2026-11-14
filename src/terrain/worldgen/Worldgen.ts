@@ -26,6 +26,7 @@ import { BiomeManager, obfuscateSeed } from './biome/BiomeManager'
 import { ParameterList, sampleClimate, type ClimateSampler } from './biome/Climate'
 import { netherBiomeParameters, overworldBiomeParameters } from './biome/OverworldBiomeBuilder'
 import { SurfaceSystem } from './surface/SurfaceSystem'
+import { createOreVeinifier, type Veinifier } from './ore/OreVeinifier'
 
 /**
  * 世界生成的“总入口”。把四个步骤串起来，外部只需要和这一个类打交道：
@@ -56,6 +57,7 @@ export class Worldgen {
   /** 预估地表高度的缓存（每个 noise_settings 一张），换种子时清空 */
   private surfaceCaches = new Map<string, Map<number, number>>()
   private aquiferRandom: PositionalRandomFactory | null = null
+  private oreRandom: PositionalRandomFactory | null = null
   private biomeSources = new Map<string, BiomeSource>()
   private surfaceSystems = new Map<string, SurfaceSystem | null>()
   private biomeData = new Map<string, BiomeData>()
@@ -114,6 +116,7 @@ export class Worldgen {
     this.cachedSamplers.clear()
     this.surfaceCaches.clear()
     this.aquiferRandom = null
+    this.oreRandom = null
     this.biomeSources.clear()
     this.surfaceSystems.clear()
     return value
@@ -173,6 +176,19 @@ export class Worldgen {
       )
     }
     return this.surfaceSystems.get(id)!
+  }
+
+  /**
+   * 矿脉（v5，见 ore/OreVeinifier.ts）。wrap 把 vein_toggle 等包装成和 final_density 同一个 NoiseChunk 里的插值版本。
+   * noise_settings 没开矿脉时返回 null。原版：oreRandom = random.fromHashOf("minecraft:ore").forkPositional()
+   */
+  oreVeinifier(settingsId: string, wrap: (fn: DensityFunction) => DensityFunction): Veinifier | null {
+    const s = this.getSettings(settingsId)
+    const r = s.router
+    if (!s.oreVeinsEnabled || !r.vein_toggle || !r.vein_ridged || !r.vein_gap) return null
+    this.oreRandom ??= this.randomState.random.fromHashOf('minecraft:ore').forkPositional()
+    const id = normalizeId(settingsId)
+    return createOreVeinifier(wrap(this.router(id, 'vein_toggle')), wrap(this.router(id, 'vein_ridged')), wrap(this.router(id, 'vein_gap')), this.oreRandom)
   }
 
   /**
@@ -299,6 +315,8 @@ const OVERWORLD_LIKE = ['overworld', 'amplified', 'large_biomes', 'caves', 'floa
  *   getBiome(x, y, z)       方块坐标 → 生物群系（原版 BiomeManager 的抖动缩放）
  */
 export class BiomeSource {
+  /** 可能出现的群系（v5） */
+  readonly possible: string[]
   readonly manager: BiomeManager
   private readonly list: ParameterList<string> | null
   private readonly single: string
@@ -316,6 +334,8 @@ export class BiomeSource {
     const isMinecraft = settingsId.startsWith('minecraft:')
     const params = isMinecraft && OVERWORLD_LIKE.includes(name) ? overworldBiomeParameters({ paleGarden: wg.registry.biome.has('minecraft:pale_garden') }) : isMinecraft && name === 'nether' ? netherBiomeParameters() : null
     this.list = params ? new ParameterList(params) : null
+    // 原版 possibleBiomes：参数表里第一次出现的顺序（地物排序要用）
+    this.possible = params ? [...new Set(params.map(([, b]) => b))] : [isMinecraft && name === 'end' ? 'minecraft:the_end' : 'minecraft:plains']
     this.single = isMinecraft && name === 'end' ? 'minecraft:the_end' : 'minecraft:plains'
     const r = s.router
     const fields = ['temperature', 'vegetation', 'continents', 'erosion', 'depth', 'ridges'] as const

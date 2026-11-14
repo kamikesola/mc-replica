@@ -46,7 +46,19 @@ export enum BlockType {
   yellow_terracotta = 47,
   brown_terracotta = 48,
   red_terracotta = 49,
-  light_gray_terracotta = 50
+  light_gray_terracotta = 50,
+  // v5：矿石、石头、树木、装饰（顺序和下面 BLOCKS.push 一致）
+  granite, diorite, andesite, tuff, clay, infested_stone, infested_deepslate,
+  coal_ore, deepslate_coal_ore, iron_ore, deepslate_iron_ore, copper_ore, deepslate_copper_ore,
+  gold_ore, deepslate_gold_ore, redstone_ore, deepslate_redstone_ore, emerald_ore, deepslate_emerald_ore,
+  lapis_ore, deepslate_lapis_ore, diamond_ore, deepslate_diamond_ore, raw_iron_block, raw_copper_block,
+  spruce_log, birch_log, jungle_log, acacia_log, dark_oak_log, mangrove_log, cherry_log, pale_oak_log,
+  spruce_leaves, birch_leaves, jungle_leaves, acacia_leaves, dark_oak_leaves, mangrove_leaves, cherry_leaves, pale_oak_leaves,
+  azalea_leaves, flowering_azalea_leaves,
+  mushroom_stem, red_mushroom_block, brown_mushroom_block,
+  mangrove_roots, muddy_mangrove_roots, rooted_dirt, bee_nest, creaking_heart,
+  snow, moss_carpet, pale_moss_carpet,
+  vine, cocoa, pale_hanging_moss, mangrove_propagule
 }
 
 // ---------------------------------------------------------------- 流体状态
@@ -104,6 +116,13 @@ export interface BlockInfo {
   solid: boolean
   /** 能不能被玩家挖掉 */
   breakable: boolean
+  /**
+   * 形状（v5）：cube 完整方块；slab 只有底下 height/16 高（雪层、地毯）；cross 两片交叉的面（藤蔓、垂根等植物，镂空纹理）。
+   * 不是 cube 的方块都不实心，也不挡住相邻方块的面。
+   */
+  shape: 'cube' | 'slab' | 'cross'
+  /** slab 的高度（1/16 格） */
+  height: number
 }
 
 const block = (name: string, top: TextureName, side = top, bottom = top, extra: Partial<BlockInfo> = {}): BlockInfo => ({
@@ -111,8 +130,12 @@ const block = (name: string, top: TextureName, side = top, bottom = top, extra: 
   textures: { top, side, bottom },
   solid: true,
   breakable: true,
+  shape: 'cube',
+  height: 16,
   ...extra
 })
+const slab = (name: string, tex: TextureName, height: number) => block(name, tex, tex, tex, { solid: false, shape: 'slab', height })
+const cross = (name: string, tex: TextureName) => block(name, tex, tex, tex, { solid: false, shape: 'cross' })
 const fluid = (name: string, tex: TextureName) => block(name, tex, tex, tex, { solid: false, breakable: false })
 
 export const BLOCKS: BlockInfo[] = [
@@ -158,6 +181,67 @@ BLOCKS.push(
   block('红色陶瓦', 'red_terracotta'),
   block('淡灰色陶瓦', 'light_gray_terracotta')
 )
+// v5
+BLOCKS.push(
+  block('花岗岩', 'granite'),
+  block('闪长岩', 'diorite'),
+  block('安山岩', 'andesite'),
+  block('凝灰岩', 'tuff'),
+  block('黏土', 'clay'),
+  block('被虫蚀的石头', 'stone'),
+  block('被虫蚀的深板岩', 'deepslate_top', 'deepslate'),
+  block('煤矿石', 'coal_ore'),
+  block('深层煤矿石', 'deepslate_coal_ore'),
+  block('铁矿石', 'iron_ore'),
+  block('深层铁矿石', 'deepslate_iron_ore'),
+  block('铜矿石', 'copper_ore'),
+  block('深层铜矿石', 'deepslate_copper_ore'),
+  block('金矿石', 'gold_ore'),
+  block('深层金矿石', 'deepslate_gold_ore'),
+  block('红石矿石', 'redstone_ore'),
+  block('深层红石矿石', 'deepslate_redstone_ore'),
+  block('绿宝石矿石', 'emerald_ore'),
+  block('深层绿宝石矿石', 'deepslate_emerald_ore'),
+  block('青金石矿石', 'lapis_ore'),
+  block('深层青金石矿石', 'deepslate_lapis_ore'),
+  block('钻石矿石', 'diamond_ore'),
+  block('深层钻石矿石', 'deepslate_diamond_ore'),
+  block('粗铁块', 'raw_iron_block'),
+  block('粗铜块', 'raw_copper_block'),
+  block('云杉原木', 'spruce_log_top', 'spruce_log'),
+  block('白桦原木', 'birch_log_top', 'birch_log'),
+  block('丛林原木', 'jungle_log_top', 'jungle_log'),
+  block('金合欢原木', 'acacia_log_top', 'acacia_log'),
+  block('深色橡木原木', 'dark_oak_log_top', 'dark_oak_log'),
+  block('红树原木', 'mangrove_log_top', 'mangrove_log'),
+  block('樱花原木', 'cherry_log_top', 'cherry_log'),
+  block('苍白橡木原木', 'pale_oak_log_top', 'pale_oak_log'),
+  block('云杉树叶', 'spruce_leaves'),
+  block('白桦树叶', 'birch_leaves'),
+  block('丛林树叶', 'jungle_leaves'),
+  block('金合欢树叶', 'acacia_leaves'),
+  block('深色橡木树叶', 'dark_oak_leaves'),
+  block('红树树叶', 'mangrove_leaves'),
+  block('樱花树叶', 'cherry_leaves'),
+  block('苍白橡树树叶', 'pale_oak_leaves'),
+  block('杜鹃树叶', 'azalea_leaves'),
+  block('盛开的杜鹃树叶', 'flowering_azalea_leaves'),
+  block('蘑菇柄', 'mushroom_stem'),
+  block('红色蘑菇方块', 'red_mushroom_block'),
+  block('棕色蘑菇方块', 'brown_mushroom_block'),
+  block('红树根', 'mangrove_roots'),
+  block('沾泥的红树根', 'muddy_mangrove_roots'),
+  block('缠根泥土', 'rooted_dirt'),
+  block('蜂巢', 'bee_nest_top', 'bee_nest'),
+  block('嘎枝之心', 'pale_oak_log_top', 'creaking_heart'),
+  slab('雪', 'snow', 2),
+  slab('苔藓地毯', 'moss_carpet', 1),
+  slab('苍白苔藓地毯', 'pale_moss_carpet', 1),
+  cross('藤蔓', 'vine'),
+  cross('可可果', 'cocoa'),
+  cross('苍白垂须', 'pale_hanging_moss'),
+  cross('红树胎生苗', 'mangrove_propagule')
+)
 
 /**
  * 原版方块名 → 方块 ID（地表规则、含水层给出的是原版名字）。
@@ -193,7 +277,14 @@ export const BLOCK_BY_NAME: Record<string, BlockType> = {
   'minecraft:yellow_terracotta': BlockType.yellow_terracotta,
   'minecraft:brown_terracotta': BlockType.brown_terracotta,
   'minecraft:red_terracotta': BlockType.red_terracotta,
-  'minecraft:light_gray_terracotta': BlockType.light_gray_terracotta
+  'minecraft:light_gray_terracotta': BlockType.light_gray_terracotta,
+  'minecraft:oak_log': BlockType.log,
+  'minecraft:oak_leaves': BlockType.leaves
+}
+// v5：名字和枚举名一致的方块
+for (const k of Object.keys(BlockType)) {
+  const v = (BlockType as unknown as Record<string, number>)[k]
+  if (typeof v === 'number' && v >= BlockType.granite) BLOCK_BY_NAME[`minecraft:${k}`] = v
 }
 
 /** 方块 ID → 原版方块名（地表规则读方块时用） */
@@ -239,3 +330,8 @@ export const HOTBAR: BlockType[] = [
 export const SOLID: Uint8Array = Uint8Array.from({ length: 256 }, (_, b) => (BLOCKS[b]?.solid ? 1 : 0))
 
 export const isSolid = (b: number) => SOLID[b] === 1
+
+/** 形状（v5）：0 完整方块，1 slab（雪层、地毯），2 十字（藤蔓等） */
+export const SHAPE: Uint8Array = Uint8Array.from({ length: 256 }, (_, b) => (BLOCKS[b]?.shape === 'slab' ? 1 : BLOCKS[b]?.shape === 'cross' ? 2 : 0))
+/** slab 的高度（1/16 格） */
+export const SHAPE_HEIGHT: Uint8Array = Uint8Array.from({ length: 256 }, (_, b) => BLOCKS[b]?.height ?? 16)

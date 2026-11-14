@@ -229,6 +229,8 @@ export interface NoiseSettingsInfo {
   defaultBlock: string
   /** 地表规则（v4）：原样保存 JSON，由 surface/SurfaceRules.ts 解析；没有时为 null */
   surfaceRule: unknown
+  /** 矿脉（v5）：ore_veins_enabled，主世界开 */
+  oreVeinsEnabled: boolean
   router: Partial<Record<RouterField, DensityFunction>>
 }
 
@@ -258,6 +260,7 @@ export function parseNoiseSettings(parser: DensityFunctionParser, id: string): N
     defaultFluid: fluidName((json.default_fluid as { Name?: string } | undefined)?.Name),
     defaultBlock: normalizeId((json.default_block as { Name?: string } | undefined)?.Name ?? 'minecraft:stone'),
     surfaceRule: json.surface_rule ?? null,
+    oreVeinsEnabled: json.ore_veins_enabled === true,
     router
   }
 }

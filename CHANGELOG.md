@@ -2,6 +2,37 @@
 
 每个版本对应一个 git tag 和一篇文章。数字来自 `tools/` 下的脚本或 `tests/` 里的测试，可以自己复现。
 
+## v5 · 地物：矿石、树和积雪
+
+文章：[docs/articles/v5-地物：矿石与树.md](docs/articles/v5-地物：矿石与树.md) · 日志：[docs/notes/v5-notes.md](docs/notes/v5-notes.md)
+
+**目标版本改为 1.21.4**（世界生成数据和 1.21.1 相同；群系表多了苍白之园）。
+
+**新增**
+
+- 矿脉（`worldgen/ore/OreVeinifier.ts`）：铜矿脉 / 铁矿脉，噪声阶段决定
+- 地物系统（`worldgen/feature/`）：读取 `configured_feature` / `placed_feature`；放置修饰器（count、in_square、height_range、heightmap、biome、
+  rarity_filter、surface_water_depth_filter、block_predicate_filter、environment_scan、random_offset、noise_based_count、noise_threshold_count 等）；
+  地物排序（FeatureSorter）；`WorldgenRandom` 的装饰种子 / 地物种子
+- 地物：矿石（ore）、圆盘（disk）、积雪和冰（freeze_top_layer）、巨型蘑菇、三种随机选择器、树（9 种树干放置器、11 种树叶放置器、
+  红树根放置器、8 种装饰器），共 36 种树
+- 区块流水线（`worker/pipeline.ts`）：区块原型 + 周围 3×3 的装饰；4×4 区块的“装饰区域”内按顺序装饰；Worker 按区域分配
+- 58 种新方块（矿石、石头、8 种木头的原木和树叶、蘑菇方块、雪层、苔藓地毯、藤蔓……），纹理仍是代码画的
+- 网格：扁方块（雪层、地毯）、十字形镂空植物（藤蔓、可可果、垂须、胎生苗）
+- 原版对照工具 `tools/vanilla/`：读原版存档（.mca / NBT）、和我们生成的区块逐格比较、生成测试用的对照数据
+- `tests/feature.test.ts`：矿脉、矿石、树和原版存档逐格对照；`tests/parity.test.ts` 新增 Java HashSet 遍历顺序
+
+**改动**
+
+- 生物群系查找用包围盒树，结果和逐项比较一样，快 6 倍
+- `generateChunk` 拆成 `protoChunk`（地形 + 地表）和装配（+ 地物 + 网格）
+
+**已知问题**
+
+- 只实现了矿石、树、积雪；花草、湖、泉、钟乳石、晶洞等地物还没有（v5.x），雕刻器也没有
+- 原木都是竖着的（没有方块状态）
+- 区块边上的树：装饰区域之间互相看不到；原版自己在不同生成顺序下也会不一样
+
 ## v4 · 生物群系与地表规则
 
 文章：[docs/articles/v4-生物群系与地表规则.md](docs/articles/v4-生物群系与地表规则.md) · 日志：[docs/notes/v4-notes.md](docs/notes/v4-notes.md)

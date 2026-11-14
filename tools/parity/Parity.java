@@ -414,6 +414,14 @@ public class Parity {
     return xs;
   }
 
+  /** 和原版 Vec3i 一样的 hashCode / equals */
+  static final class Pos3 {
+    final int x, y, z;
+    Pos3(int x, int y, int z) { this.x = x; this.y = y; this.z = z; }
+    @Override public int hashCode() { return (this.y + this.z * 31) * 31 + this.x; }
+    @Override public boolean equals(Object o) { return o instanceof Pos3 p && p.x == x && p.y == y && p.z == z; }
+  }
+
   public static void main(String[] args) {
     // 1) LegacyRandomSource 必须与 java.util.Random 完全一致
     for (long s : SEEDS) {
@@ -576,6 +584,25 @@ public class Parity {
         int j = r.nextInt(7) + 9; int k = 0;
         for (int l = 0; k < j && l < bs.length; l += r.nextInt(16) + 4) { bs[l] = "w"; if (l - 1 > 0 && r.nextBoolean()) bs[l - 1] = "g"; if (l + 1 < bs.length && r.nextBoolean()) bs[l + 1] = "g"; ++k; }
         xs.add("\"" + String.join("", bs) + "\"");
+      }
+      out.append(list(xs));
+    }
+
+    key("hashSetOrder"); {
+      // v5：树的装饰器按 HashSet<BlockPos> 的遍历顺序走（再按 y 稳定排序），这里用真正的 java.util.HashSet
+      List<String> xs = new ArrayList<>();
+      for (long sd : SEEDS) {
+        java.util.Random rnd = new java.util.Random(sd);
+        int n = 5 + rnd.nextInt(300);
+        java.util.HashSet<Pos3> set = new java.util.HashSet<>();
+        List<String> ins = new ArrayList<>();
+        for (int i = 0; i < n; ++i) {
+          Pos3 p = new Pos3(rnd.nextInt(40) - 20 + (int)(sd % 1000), 60 + rnd.nextInt(30), rnd.nextInt(40) - 20 - (int)(sd % 777));
+          if (set.add(p)) ins.add("[" + p.x + "," + p.y + "," + p.z + "]");
+        }
+        List<String> it = new ArrayList<>();
+        for (Pos3 p : set) it.add("[" + p.x + "," + p.y + "," + p.z + "]");
+        xs.add("[" + list(ins) + "," + list(it) + "]");
       }
       out.append(list(xs));
     }

@@ -1,6 +1,7 @@
 import { BLOCK_BITS, BLOCK_BY_NAME, BlockType, NAME_BY_BLOCK } from '../blocks'
 import PalettedContainer, { type PalettedData } from '../chunk/PalettedContainer'
 import { meshSection, N, nIndex, type MeshOptions, type SectionMesh } from '../mesh/mesher'
+import { ChunkSource } from './pipeline'
 import { type Aquifer, Fluid, foliageColor, grassColor, NoiseChunk, type NoiseSettingsInfo, type Worldgen } from '../worldgen'
 
 /**
@@ -34,77 +35,72 @@ export type SectionMeshes = { opaque: SectionMesh; water: SectionMesh } | null
 
 const FLUID_BLOCK = [BlockType.air, BlockType.water, BlockType.lava]
 
-export function generateChunk(
-  wg: Worldgen,
-  settingsId: string,
-  s: NoiseSettingsInfo,
-  cx: number,
-  cz: number,
-  opts: MeshOptions = {},
-  aquifer: Aquifer = wg.aquifer(settingsId, cx, cz)
-) {
-  const t0 = performance.now()
+export interface ProtoChunk {
+  /** blocks[((y - minY) * 16 + lz) * 16 + lx]：地形 + 含水层 + 矿脉 + 地表，还没有地物 */
+  blocks: Uint8Array
+  /** 生成完马上要“流一下”的流体（区块内下标） */
+  fluidUpdates: Int32Array
+}
+
+/**
+ * 区块的“原型”（原版 ProtoChunk 在 surface 状态时的样子）：
+ *   1. NoiseChunk 按原版规则算出每个方块的 final_density，> 0 是石头；
+ *      ≤ 0 的地方交给含水层（v3）决定是空气、水、岩浆；石头里再问一次矿脉（v5）
+ *   2. 地表：有原版 surface_rule 就用（v4），否则用 v0~v3 的临时规则
+ * 地物（v5）在这之后、由 ChunkSource 用周围 3×3 个原型来放。
+ */
+export function protoChunk(wg: Worldgen, settingsId: string, s: NoiseSettingsInfo, cx: number, cz: number, aquifer: Aquifer = wg.aquifer(settingsId, cx, cz)): ProtoChunk {
   const H = s.height
   const minY = s.minY
   const sea = s.seaLevel
+  const blocks = new Uint8Array(16 * 16 * H)
+  const bidx = (lx: number, y: number, lz: number) => ((y - minY) * 16 + lz) * 16 + lx
+  const wx0 = cx * 16
+  const wz0 = cz * 16
 
-  // padded[((y-minY)*W + pz)*W + px]，px/pz = 局部坐标 + 1
-  const padded = new Uint8Array(W * W * H)
-  const pidx = (px: number, y: number, pz: number) => ((y - minY) * W + pz) * W + px
-
-  // ---- 1. 密度 → 石头 / 空气
-  // NoiseChunk 的区域起点要对齐 cell 宽度（4），所以区域取 24×24，只遍历需要的 18×18 列
-  const wx0 = cx * 16 - PAD
-  const wz0 = cz * 16 - PAD
-  const align = (v: number) => Math.floor(v / s.cellWidth) * s.cellWidth
-  const rx0 = align(wx0)
-  const rz0 = align(wz0)
-  const size = Math.ceil((wx0 + W - rx0) / s.cellWidth) * s.cellWidth
-  const sizeZ = Math.ceil((wz0 + W - rz0) / s.cellWidth) * s.cellWidth
+  // ---- 1. 密度 → 石头 / 空气 / 流体 / 矿脉
   const noise = new NoiseChunk(wg.router(settingsId, 'final_density'), {
-    x0: rx0,
-    z0: rz0,
-    sizeX: size,
-    sizeZ,
+    x0: wx0,
+    z0: wz0,
+    sizeX: 16,
+    sizeZ: 16,
     minY,
     height: H,
     cellWidth: s.cellWidth,
     cellHeight: s.cellHeight
   })
-  // 生成完马上要“流一下”的流体（含水层边上的水，原版 shouldScheduleFluidUpdate），只记区块内部的
   const fluidUpdates: number[] = []
+  // 矿脉（v5）：密度 > 0 的格子先问矿脉（原版 NoiseChunk 的 MaterialRuleList：含水层 → 矿脉 → 默认方块）
+  const vein = wg.oreVeinifier(settingsId, (fn) => noise.wrap(fn))
+  const vctx = { blockX: 0, blockY: 0, blockZ: 0 }
   noise.forEach(
     (x, y, z, density) => {
       const f = aquifer.computeSubstance(x, y, z, density)
-      const b = f === null ? BlockType.stone : FLUID_BLOCK[f]
-      padded[pidx(x - wx0, y, z - wz0)] = b
-      if (f !== null && f !== Fluid.air && aquifer.shouldScheduleFluidUpdate) {
-        const lx = x - cx * 16
-        const lz = z - cz * 16
-        if (lx >= 0 && lx < 16 && lz >= 0 && lz < 16) fluidUpdates.push(((y - minY) * 16 + lz) * 16 + lx)
-      }
+      let b: number
+      if (f !== null) b = FLUID_BLOCK[f]
+      else if (vein) {
+        vctx.blockX = x
+        vctx.blockY = y
+        vctx.blockZ = z
+        const v = vein(vctx)
+        b = v === null ? BlockType.stone : BLOCK_BY_NAME[v]
+      } else b = BlockType.stone
+      const i = bidx(x - wx0, y, z - wz0)
+      blocks[i] = b
+      if (f !== null && f !== Fluid.air && aquifer.shouldScheduleFluidUpdate) fluidUpdates.push(i)
     },
-    { x0: wx0, x1: wx0 + W, z0: wz0, z1: wz0 + W }
+    { x0: wx0, x1: wx0 + 16, z0: wz0, z1: wz0 + 16 }
   )
 
-  // ---- 2. 地表：有原版 surface_rule 就用原版规则（v4），否则用临时规则
+  // ---- 2. 地表
   const surface = wg.surfaceSystem(settingsId)
   const biomes = wg.biomes(settingsId)
-  // 方块位置 → 生物群系（BiomeManager 要算 64 位整数，按位置缓存）
-  const biomeMemo = new Map<number, string>()
-  const biomeAt = (x: number, y: number, z: number) => {
-    const k = ((x - wx0 + 4) * 64 + (z - wz0 + 4)) * 1024 + (y - minY)
-    let b = biomeMemo.get(k)
-    if (b === undefined) biomeMemo.set(k, (b = biomes.getBiome(x, y, z)))
-    return b
-  }
-  // 每一列最高的非空气方块（原版 WORLD_SURFACE_WG 高度图）
-  const heights = new Int32Array(W * W)
-  for (let pz = 0; pz < W; pz++)
-    for (let px = 0; px < W; px++) {
+  const heights = new Int32Array(256)
+  for (let lz = 0; lz < 16; lz++)
+    for (let lx = 0; lx < 16; lx++) {
       let y = minY + H - 1
-      while (y >= minY && padded[pidx(px, y, pz)] === BlockType.air) y--
-      heights[pz * W + px] = y
+      while (y >= minY && blocks[bidx(lx, y, lz)] === BlockType.air) y--
+      heights[lz * 16 + lx] = y
     }
   if (surface) {
     surface.buildSurface({
@@ -113,24 +109,94 @@ export function generateChunk(
       minY,
       height: H,
       column: (lx, lz) => ({
-        get: (y) => (y < minY || y >= minY + H ? 'minecraft:air' : NAME_BY_BLOCK[padded[pidx(lx + PAD, y, lz + PAD)]]),
+        get: (y) => (y < minY || y >= minY + H ? 'minecraft:air' : NAME_BY_BLOCK[blocks[bidx(lx, y, lz)]]),
         set: (y, name) => {
           if (y < minY || y >= minY + H) return
-          padded[pidx(lx + PAD, y, lz + PAD)] = BLOCK_BY_NAME[name] ?? BlockType.stone
+          blocks[bidx(lx, y, lz)] = BLOCK_BY_NAME[name] ?? BlockType.stone
           // 原版 ProtoChunk.setBlockState 会更新高度图：侵蚀恶地的石柱放下去以后，这一列的地表从柱顶开始算
-          const h = (lz + PAD) * W + lx + PAD
-          if (name !== 'minecraft:air' && y > heights[h]) heights[h] = y
+          if (name !== 'minecraft:air' && y > heights[lz * 16 + lx]) heights[lz * 16 + lx] = y
         }
       }),
-      heightAt: (lx, lz) => heights[(lz + PAD) * W + lx + PAD],
-      biome: biomeAt,
+      heightAt: (lx, lz) => heights[lz * 16 + lx],
+      biome: (x, y, z) => biomes.getBiome(x, y, z),
       coldEnoughToSnow: (b, x, y, z) => biomes.coldEnoughToSnow(b, x, y, z),
       warmerThan01: (b, x, y, z) => biomes.temperature(b, x, y, z) > Math.fround(0.1),
       preliminarySurfaceLevel: wg.preliminarySurface(settingsId)
     })
   } else {
-    temporarySurface(padded, pidx, wx0, wz0, minY, H, sea)
+    temporarySurface(blocks, wx0, wz0, minY, H, sea)
   }
+  return { blocks, fluidUpdates: Int32Array.from(fluidUpdates) }
+}
+
+/** generateChunk 的选项 */
+export interface ChunkOptions extends MeshOptions {
+  /** 放地物（v5，默认放）。false 时等于 v4 的结果 */
+  features?: boolean
+}
+
+/** 每个 Worldgen 一个区块源（缓存原型和装饰结果） */
+const sources = new WeakMap<Worldgen, Map<string, ChunkSource>>()
+export function chunkSource(wg: Worldgen, settingsId: string, s: NoiseSettingsInfo): ChunkSource {
+  let m = sources.get(wg)
+  if (!m) sources.set(wg, (m = new Map()))
+  const key = `${settingsId}|${wg.seed}`
+  let src = m.get(key)
+  if (!src) {
+    m.clear()
+    m.set(key, (src = new ChunkSource(wg, settingsId, s)))
+  }
+  return src
+}
+
+/**
+ * 生成一个区块：原型 → 地物 → 颜色 → 网格。
+ *
+ * 为了让区块边上的面也能正确剔除，网格用 18×18 列（区块 16×16 + 四周各 1）：
+ * 外面一圈来自邻居区块（原型 + 已经算出来的装饰），只用来判断“邻居是不是实心”。
+ */
+export function generateChunk(wg: Worldgen, settingsId: string, s: NoiseSettingsInfo, cx: number, cz: number, opts: ChunkOptions = {}) {
+  const t0 = performance.now()
+  const H = s.height
+  const minY = s.minY
+  const src = chunkSource(wg, settingsId, s)
+  const features = opts.features !== false && src.hasFeatures
+
+  // padded[((y-minY)*W + pz)*W + px]，px/pz = 局部坐标 + 1
+  const padded = new Uint8Array(W * W * H)
+  const pidx = (px: number, y: number, pz: number) => ((y - minY) * W + pz) * W + px
+  for (let dz = -1; dz <= 1; dz++)
+    for (let dx = -1; dx <= 1; dx++) {
+      const blocks = features ? src.withDecorations(cx + dx, cz + dz, cx, cz) : src.proto(cx + dx, cz + dz).blocks
+      // 这个邻居在 padded 里占哪些列
+      const lx0 = dx < 0 ? 15 : 0
+      const lx1 = dx > 0 ? 0 : 15
+      const lz0 = dz < 0 ? 15 : 0
+      const lz1 = dz > 0 ? 0 : 15
+      for (let y = 0; y < H; y++)
+        for (let lz = lz0; lz <= lz1; lz++)
+          for (let lx = lx0; lx <= lx1; lx++) padded[(y * W + (lz + dz * 16 + PAD)) * W + lx + dx * 16 + PAD] = blocks[(y * 16 + lz) * 16 + lx]
+    }
+  const fluidUpdates = src.proto(cx, cz).fluidUpdates
+  const biomes = wg.biomes(settingsId)
+  const wx0 = cx * 16 - PAD
+  const wz0 = cz * 16 - PAD
+  // 方块位置 → 生物群系（BiomeManager 要算 64 位整数，按位置缓存）
+  const biomeMemo = new Map<number, string>()
+  const biomeAt = (x: number, y: number, z: number) => {
+    const k = ((x - wx0 + 4) * 64 + (z - wz0 + 4)) * 1024 + (y - minY)
+    let b = biomeMemo.get(k)
+    if (b === undefined) biomeMemo.set(k, (b = biomes.getBiome(x, y, z)))
+    return b
+  }
+  // 每一列最高的非空气方块
+  const heights = new Int32Array(W * W)
+  for (let pz = 0; pz < W; pz++)
+    for (let px = 0; px < W; px++) {
+      let y = minY + H - 1
+      while (y >= minY && padded[pidx(px, y, pz)] === BlockType.air) y--
+      heights[pz * W + px] = y
+    }
 
   // ---- 2.5 每一列草、树叶、水的颜色（v4）：周围 5×5 列的生物群系颜色取平均（原版默认的“生物群系过渡”半径 2）
   const tints = biomeTints(wg, cx, cz, (x, z) => {
@@ -177,9 +243,10 @@ export function generateChunk(
  * v0~v3 的临时地表规则，现在只给没有 surface_rule 的 noise_settings（demo 的简化地形）用：
  * 水下是沙 / 沙砾，海边是沙滩，其他是草 + 3 层土；y < 0 深板岩（0..7 过渡），最底下几层基岩。
  */
-function temporarySurface(padded: Uint8Array, pidx: (px: number, y: number, pz: number) => number, wx0: number, wz0: number, minY: number, H: number, sea: number) {
-  for (let pz = 0; pz < W; pz++) {
-    for (let px = 0; px < W; px++) {
+function temporarySurface(padded: Uint8Array, wx0: number, wz0: number, minY: number, H: number, sea: number) {
+  const pidx = (px: number, y: number, pz: number) => ((y - minY) * 16 + pz) * 16 + px
+  for (let pz = 0; pz < 16; pz++) {
+    for (let px = 0; px < 16; px++) {
       const wx = wx0 + px
       const wz = wz0 + pz
       // 找这一列最高的石头（水、岩浆不算）

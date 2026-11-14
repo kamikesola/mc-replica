@@ -24,8 +24,8 @@ const user: Record<string, () => Promise<unknown>> =
   import.meta.env.MODE === 'public'
     ? {}
     : {
-        ...import.meta.glob('/datapacks/*/worldgen/{noise,density_function,noise_settings,biome}/**/*.json', { import: 'default' }),
-        ...import.meta.glob('/datapacks/*/data/*/worldgen/{noise,density_function,noise_settings,biome}/**/*.json', {
+        ...import.meta.glob('/datapacks/*/worldgen/{noise,density_function,noise_settings,biome,configured_feature,placed_feature}/**/*.json', { import: 'default' }),
+        ...import.meta.glob('/datapacks/*/data/*/worldgen/{noise,density_function,noise_settings,biome,configured_feature,placed_feature}/**/*.json', {
           import: 'default'
         })
       }

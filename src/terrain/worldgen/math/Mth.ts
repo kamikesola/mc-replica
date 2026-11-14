@@ -141,3 +141,33 @@ export function parseWorldSeed(text: string): bigint {
   }
   return BigInt(javaStringHashCode(t))
 }
+
+// ---------------------------------------------------------------- 查表的 sin / cos（原版 Mth.sin / Mth.cos）
+
+/** 65536 项的正弦表，每项是 float */
+const SIN_TABLE = (() => {
+  const t = new Float32Array(65536)
+  for (let i = 0; i < 65536; i++) t[i] = Math.sin((i * Math.PI * 2.0) / 65536.0)
+  return t
+})()
+/** 1.21.4 的 Mth.sin(float)：SIN[(int)(value * 10430.378F) & 65535]，全是 float 运算（用 javap 看过 server.jar 的字节码） */
+const SIN_SCALE = Math.fround(10430.378)
+/** Java 的 f2i：截断，NaN 得 0 */
+const f2i = (v: number) => (Number.isNaN(v) ? 0 : Math.trunc(v)) | 0
+
+/** 原版 Mth.sin：查表，不是 Math.sin。地物（矿石、树）的形状用它 */
+export function sin(value: number): number {
+  return SIN_TABLE[f2i(Math.fround(Math.fround(value) * SIN_SCALE)) & 65535]
+}
+
+export function cos(value: number): number {
+  return SIN_TABLE[f2i(Math.fround(Math.fround(Math.fround(value) * SIN_SCALE) + 16384.0)) & 65535]
+}
+
+/** 原版 Mth.ceil */
+export const ceil = (v: number) => Math.ceil(v)
+
+/** 原版 Mth.nextInt(random, min, max)：min >= max 时返回 min */
+export function nextIntBetween(random: { nextInt(b: number): number }, min: number, max: number): number {
+  return min >= max ? min : random.nextInt(max - min + 1) + min
+}

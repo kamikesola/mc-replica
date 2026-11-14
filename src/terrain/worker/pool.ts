@@ -38,9 +38,12 @@ export default class WorkerPool {
     return this.slots.reduce((n, s) => n + s.busy, 0)
   }
 
-  /** 发给最空闲的 Worker */
-  call<M extends Method>(method: M, params: Params<M>): Promise<Result<M>> {
-    const slot = this.slots.reduce((a, b) => (b.busy < a.busy ? b : a))
+  /**
+   * 发给最空闲的 Worker；给了 affinity 就固定发给某一个（v5：同一个装饰区域的区块交给同一个 Worker，
+   * 它缓存的区块原型和装饰结果才能复用，不用每个 Worker 各算一遍）
+   */
+  call<M extends Method>(method: M, params: Params<M>, affinity?: number): Promise<Result<M>> {
+    const slot = affinity === undefined ? this.slots.reduce((a, b) => (b.busy < a.busy ? b : a)) : this.slots[((affinity % this.slots.length) + this.slots.length) % this.slots.length]
     return this.send(slot, method, params)
   }
 

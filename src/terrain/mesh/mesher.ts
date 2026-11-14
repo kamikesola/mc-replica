@@ -1,4 +1,4 @@
-import { FACE_TEXTURES, FLUID_KIND, FLUIDS, FluidKind, SOLID } from '../blocks'
+import { FACE_TEXTURES, FLUID_KIND, FLUIDS, FluidKind, SHAPE, SHAPE_HEIGHT, SOLID } from '../blocks'
 import { TEXTURE_LAYER, TINT_BY_LAYER } from '../textures/painters'
 
 /**
@@ -234,7 +234,57 @@ export function meshSection(blocks: Uint8Array, opts: MeshOptions = {}): { opaqu
       }
     }
   }
+  shapedBlocks(opaque, blocks)
   return { opaque: opaque.build(), water: water.build() }
+}
+
+/**
+ * 不是完整方块的方块（v5）：逐个输出，不参与贪婪合并。
+ *   slab（雪层、地毯）：一个扁盒子，顶面总是画，其他面看邻居是不是实心
+ *   cross（藤蔓、垂须……）：两片对角线方向的面，正反两面都画（face 6、7，着色器里按对角线算纹理坐标）
+ */
+function shapedBlocks(out: Builder, blocks: Uint8Array): void {
+  const S = POSITION_SCALE
+  for (let y = 0; y < 16; y++)
+    for (let z = 0; z < 16; z++)
+      for (let x = 0; x < 16; x++) {
+        const b = blocks[nIndex(x, y, z)]
+        const shape = SHAPE[b]
+        if (shape === 0) continue
+        if (shape === 1) {
+          const h = SHAPE_HEIGHT[b] / 16
+          for (let face = 0; face < 6; face++) {
+            const n = FACE_DIRS[face]
+            if (face !== 3 && SOLID[blocks[nIndex(x + n[0], y + n[1], z + n[2])]]) continue
+            const axis = face >> 1
+            const u = (axis + 1) % 3
+            const v = (axis + 2) % 3
+            const positive = (face & 1) === 1
+            const corners = rectCorners(axis, u, v, positive, [x, y, z][axis], [x, y, z][u], [x, y, z][v], 1, 1)
+            // 把 y 压扁：顶面放到 y + h，侧面的上边也压到 y + h
+            for (let c = 0; c < 4; c++) if (corners[c * 3 + 1] > y * S) corners[c * 3 + 1] = Math.round((y + h) * S)
+            out.quad(corners, face, FACE_TEXTURES[b * 6 + face], [3, 3, 3, 3], positive, false)
+          }
+        } else {
+          const layer = FACE_TEXTURES[b * 6]
+          const x0 = x * S
+          const x1 = (x + 1) * S
+          const z0 = z * S
+          const z1 = (z + 1) * S
+          const y0 = y * S
+          const y1 = (y + 1) * S
+          // (u-,v-) (u+,v-) (u-,v+) (u+,v+)：u 沿对角线，v 向上
+          const a = [x0, y0, z0, x1, y0, z1, x0, y1, z0, x1, y1, z1]
+          const c = [x0, y0, z1, x1, y0, z0, x0, y1, z1, x1, y1, z0]
+          for (const [corners, face] of [
+            [a, 6],
+            [c, 7]
+          ] as const) {
+            out.quad([...corners], face, layer, [3, 3, 3, 3], true, false)
+            out.quad([...corners], face, layer, [3, 3, 3, 3], false, false)
+          }
+        }
+      }
 }
 
 /** 矩形的 4 个角（x,y,z ×4，已乘 POSITION_SCALE），顺序 (u-,v-) (u+,v-) (u-,v+) (u+,v+) */

@@ -34,11 +34,11 @@ varying float vLight;
 varying vec2 vColumn; // 世界坐标 (x, z)，取生物群系颜色用
 varying float vTint;
 
-const vec3 FACE_NORMAL[6] = vec3[6](vec3(-1, 0, 0), vec3(1, 0, 0), vec3(0, -1, 0), vec3(0, 1, 0), vec3(0, 0, -1), vec3(0, 0, 1));
+const vec3 FACE_NORMAL[8] = vec3[8](vec3(-1, 0, 0), vec3(1, 0, 0), vec3(0, -1, 0), vec3(0, 1, 0), vec3(0, 0, -1), vec3(0, 0, 1), vec3(0), vec3(0));
 
 #include <fog_pars_vertex>
 
-const float FACE_SHADE[6] = float[6](0.6, 0.6, 0.5, 1.0, 0.8, 0.8);
+const float FACE_SHADE[8] = float[8](0.6, 0.6, 0.5, 1.0, 0.8, 0.8, 0.85, 0.85);
 const float AO_LEVEL[4] = float[4](0.5, 0.68, 0.84, 1.0);
 
 void main() {
@@ -50,6 +50,7 @@ void main() {
   else if (face == 1) vUv = vec2(-p.z, -p.y); // +x 面
   else if (face == 4) vUv = vec2(-p.x, -p.y); // -z 面
   else if (face == 5) vUv = vec2( p.x, -p.y); // +z 面
+  else if (face >= 6) vUv = vec2( p.x, -p.y); // 十字形植物的两片斜面（v5）：沿对角线，x 每格正好走一格
   else                vUv = vec2( p.x,  p.z); // 顶面、底面
 
   vLayer = info.y;
@@ -88,11 +89,16 @@ void main() {
   gl_FragColor = vec4(0.0, 0.0, 0.0, opacity);
 #else
   vec4 c = texture(map, vec3(vUv, floor(vLayer + 0.5)));
-  if (vTint > 0.5 && c.a < 0.999) {
+  int kind = int(vTint + 0.5);
+  bool cutout = kind >= 4; // 镂空纹理（v5，十字形植物）：透明的像素丢掉，其余整张染色
+  if (cutout) {
+    if (c.a < 0.5) discard;
+    kind -= 4;
+  }
+  if (kind > 0 && (cutout || c.a < 0.999)) {
     ivec2 col = ivec2(mod(floor(vColumn), ${TINT_MAP_SIZE}.0));
-    int kind = int(vTint + 0.5);
     vec3 tint = kind == 1 ? texelFetch(grassMap, col, 0).rgb : kind == 2 ? texelFetch(foliageMap, col, 0).rgb : texelFetch(waterMap, col, 0).rgb;
-    c.rgb = mix(c.rgb, c.rgb * tint, 1.0 - c.a); // alpha 越小染得越多（mipmap 时会是中间值）
+    c.rgb = cutout ? c.rgb * tint : mix(c.rgb, c.rgb * tint, 1.0 - c.a); // alpha 越小染得越多（mipmap 时会是中间值）
   }
   gl_FragColor = vec4(c.rgb * vLight, opacity);
 #endif

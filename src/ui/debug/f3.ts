@@ -81,7 +81,7 @@ export default class F3 {
     const r = this.core.renderer.info.render
     const mb = (b: number) => (b / 1048576).toFixed(1) + ' MB'
     const lines = [
-      `mc-replica v4 (${fps} fps, 20 TPS)`,
+      `mc-replica v5 (${fps} fps, 20 TPS)`,
       `种子: ${info?.seed ?? '…'}    noise_settings: ${info?.settings ?? '…'}`,
       `区块: ${st.loaded} 已加载, ${st.loading} 生成中, 上一个用时 ${this.terrain.lastChunkMs.toFixed(0)} ms, 挖/放重建 ${this.terrain.lastRemeshMs.toFixed(1)} ms`,
       `方块数据: ${mb(st.bytes)}（v0 的存法要 ${mb(st.v0Bytes)}）`,

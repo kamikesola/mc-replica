@@ -18,7 +18,7 @@ function layerCanvas(layer: number, brightness: number): HTMLCanvasElement {
   c.width = c.height = TEX
   const img = new ImageData(TEX, TEX)
   const off = layer * TEX * TEX * 4
-  const tint = ICON_TINT[TINT_BY_LAYER[layer]]
+  const tint = ICON_TINT[TINT_BY_LAYER[layer] & 3]
   const k = [(tint >> 16) & 255, (tint >> 8) & 255, tint & 255].map((v) => v / 255)
   for (let i = 0; i < TEX * TEX * 4; i += 4) {
     // alpha < 255 的像素要染色（见 textures/painters.ts）

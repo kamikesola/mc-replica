@@ -369,6 +369,180 @@ const terracotta = (base: number) => (c: Canvas, r: () => number) => {
  * 全部纹理，顺序就是纹理数组的层号（layer）。
  * 0 号留空不用：网格里用 0 表示“这里没有面”。
  */
+
+// ---------------------------------------------------------------- v5：矿石、石头、树木、装饰
+
+/** 一种颜色的“石头类”纹理：底色 + 明暗斑点 */
+const rocky = (base: number, spots = 0.85, light = 1.12) => (c: Canvas, r: () => number) => {
+  speckle(c, hex(base), 0.07, r)
+  blotches(c, () => shade(hex(base), spots + r() * 0.06), 12, 3, r)
+  blotches(c, () => shade(hex(base), light), 8, 2, r)
+}
+
+/** 矿石：石头 / 深板岩底，加几团矿物颜色（每团 2~4 个像素，中间亮、边上暗） */
+const ore = (deep: boolean, color: number, clusters = 5) => (c: Canvas, r: () => number) => {
+  ;(deep ? deepslate : stone)(c, r)
+  for (let i = 0; i < clusters; i++) {
+    const x0 = 2 + Math.floor(r() * 12)
+    const y0 = 2 + Math.floor(r() * 12)
+    const n = 2 + Math.floor(r() * 3)
+    for (let k = 0; k < n; k++) {
+      const x = x0 + Math.floor(r() * 3) - 1
+      const y = y0 + Math.floor(r() * 3) - 1
+      c.set(x, y, shade(hex(color), 0.8 + r() * 0.4))
+    }
+    c.set(x0, y0, shade(hex(color), 1.15))
+  }
+}
+
+/** 粗矿块 */
+const rawBlock = (color: number) => (c: Canvas, r: () => number) => {
+  const { owner, edge } = voronoi(6, r)
+  const shades = Array.from({ length: 6 }, () => 0.8 + r() * 0.35)
+  c.fill((x, y) => {
+    const i = y * TEX + x
+    return edge[i] < 0.8 ? shade(hex(color), 0.55) : shade(hex(color), shades[owner[i]] * (1 + (r() - 0.5) * 0.08))
+  })
+}
+
+/** 原木侧面：竖条纹的树皮 */
+const logSide = (bark: number, stripe = 0.6) => (c: Canvas, r: () => number) => {
+  const base = hex(bark)
+  const cols = Array.from({ length: TEX }, () => 0.8 + r() * 0.35)
+  c.fill((x) => shade(base, cols[x] * (1 + (r() - 0.5) * 0.12)))
+  blotches(c, () => shade(base, stripe), 5, 3, r)
+}
+
+/** 白桦的树皮：白底黑斑 */
+function birchLog(c: Canvas, r: () => number) {
+  speckle(c, hex(0xd8d7d2), 0.05, r)
+  for (let i = 0; i < 7; i++) {
+    const x = Math.floor(r() * TEX)
+    const y = Math.floor(r() * TEX)
+    const w = 2 + Math.floor(r() * 4)
+    for (let k = 0; k < w; k++) c.set(x + k, y, shade(hex(0x2e2b28), 0.9 + r() * 0.3))
+  }
+}
+
+/** 原木顶面：方形年轮 + 一圈树皮 */
+const logEnd = (wood: number, bark: number) => (c: Canvas, r: () => number) => {
+  c.fill((x, y) => {
+    const d = Math.max(Math.abs(x - 7.5), Math.abs(y - 7.5))
+    if (d > 7) return shade(hex(bark), 0.9 + r() * 0.2)
+    const ring = Math.floor(d) % 2 === 0 ? 1 : 0.86
+    return shade(hex(wood), ring * (1 + (r() - 0.5) * 0.05))
+  })
+}
+
+/** 树叶：有颜色的（不染色）版本；tinted = true 时画成灰色、由生物群系染色 */
+const leavesOf = (color: number, tinted: boolean, flowers?: number) => (c: Canvas, r: () => number) => {
+  const base = hex(color)
+  c.fill(() => (r() < 0.18 ? shade(base, 0.55) : shade(base, 0.85 + r() * 0.35)))
+  if (flowers !== undefined) blotches(c, () => shade(hex(flowers), 0.9 + r() * 0.2), 9, 2, r)
+  if (tinted) tintAll(c)
+}
+
+/** 蘑菇方块的菌盖：底色 + 白点 */
+const mushroomCap = (color: number, dots: boolean) => (c: Canvas, r: () => number) => {
+  speckle(c, hex(color), 0.06, r)
+  if (dots) blotches(c, () => hex(0xe8e0d0), 6, 4, r)
+}
+
+function mushroomStem(c: Canvas, r: () => number) {
+  const cols = Array.from({ length: TEX }, () => 0.9 + r() * 0.15)
+  c.fill((x) => shade(hex(0xcfc6b5), cols[x] * (1 + (r() - 0.5) * 0.06)))
+}
+
+function beeNestSide(c: Canvas, r: () => number) {
+  planksLike(c, r, 0xc39a4c)
+  for (let x = 0; x < TEX; x++) c.set(x, 7, shade(hex(0x7a5a2a), 0.9))
+}
+
+function beeNestTop(c: Canvas, r: () => number) {
+  const { edge } = voronoi(8, r)
+  c.fill((x, y) => (edge[y * TEX + x] < 0.8 ? hex(0x8a6a2a) : shade(hex(0xd4a640), 0.9 + r() * 0.2)))
+}
+
+function planksLike(c: Canvas, r: () => number, color: number) {
+  const base = hex(color)
+  for (let y = 0; y < TEX; y++) for (let x = 0; x < TEX; x++) c.set(x, y, shade(base, (y % 4 === 3 ? 0.7 : 1) * (0.94 + r() * 0.1)))
+}
+
+function creakingHeart(c: Canvas, r: () => number) {
+  logSide(0x5b534c)(c, r)
+  for (let y = 5; y < 11; y++) for (let x = 5; x < 11; x++) c.set(x, y, Math.abs(x - 7.5) + Math.abs(y - 7.5) < 3 ? hex(0xe07a2a) : hex(0x3a322c))
+}
+
+function mangroveRoots(c: Canvas, r: () => number) {
+  c.fill(() => hex(0x2c2a24))
+  for (let i = 0; i < 6; i++) {
+    const vertical = r() < 0.5
+    const k = Math.floor(r() * TEX)
+    for (let t = 0; t < TEX; t++) c.set(vertical ? k : t, vertical ? t : k, shade(hex(0x4a3b2a), 0.85 + r() * 0.3))
+  }
+}
+
+function muddyMangroveRoots(c: Canvas, r: () => number) {
+  mud(c, r)
+  for (let i = 0; i < 4; i++) {
+    const k = Math.floor(r() * TEX)
+    for (let t = 0; t < TEX; t++) c.set(k, t, shade(hex(0x4a3b2a), 0.85 + r() * 0.3))
+  }
+}
+
+function rootedDirt(c: Canvas, r: () => number) {
+  dirt(c, r)
+  blotches(c, () => hex(0xa7835a), 8, 4, r)
+}
+
+/** 苔藓地毯 */
+const carpet = (color: number) => (c: Canvas, r: () => number) => {
+  speckle(c, hex(color), 0.1, r)
+  blotches(c, () => shade(hex(color), 0.8), 10, 2, r)
+}
+
+/** 十字形的植物类纹理：透明底，画一些像素（cutout） */
+const sprite = (color: number, draw: (set: (x: number, y: number, k?: number) => void, r: () => number) => void, tinted = false) => (c: Canvas, r: () => number) => {
+  for (let i = 3; i < c.data.length; i += 4) c.data[i] = 0
+  draw((x, y, k = 1) => c.set(x, y, shade(hex(color), k * (0.85 + r() * 0.3)), 255), r)
+  if (tinted) for (let i = 0; i < c.data.length; i += 4) if (c.data[i + 3] === 0) c.data[i] = c.data[i + 1] = c.data[i + 2] = 0
+}
+
+const vine = sprite(
+  0x9a9a9a,
+  (set, r) => {
+    for (let x = 0; x < TEX; x += 3) {
+      const len = 6 + Math.floor(r() * 10)
+      let xx = x
+      for (let y = 0; y < len; y++) {
+        set(xx, y)
+        if (r() < 0.4) set(xx + 1, y, 0.8)
+        if (r() < 0.2) xx += r() < 0.5 ? 1 : -1
+      }
+    }
+  },
+  true
+)
+
+const hangingMoss = sprite(0xb7bdb0, (set, r) => {
+  for (let x = 2; x < 14; x += 2) {
+    const len = 5 + Math.floor(r() * 10)
+    for (let y = 0; y < len; y++) set(x + (y % 3 === 0 ? 1 : 0), y)
+  }
+})
+
+const propagule = sprite(0x6aa84f, (set) => {
+  for (let y = 0; y < 12; y++) set(7, y + 2, 0.9)
+  for (let x = 5; x < 10; x++) set(x, 2)
+  set(7, 14, 0.6)
+})
+
+const cocoa = sprite(0xb06a2e, (set) => {
+  for (let y = 4; y < 12; y++) for (let x = 5; x < 11; x++) if ((x - 7.5) ** 2 / 9 + (y - 7.5) ** 2 / 16 < 1) set(x, y, x === 7 ? 0.7 : 1)
+  set(7, 2, 0.6)
+  set(7, 3, 0.6)
+})
+
 export const PAINTERS = {
   stone,
   deepslate,
@@ -410,7 +584,73 @@ export const PAINTERS = {
   yellow_terracotta: terracotta(0xba8523),
   brown_terracotta: terracotta(0x4d3323),
   red_terracotta: terracotta(0x8f3d2e),
-  light_gray_terracotta: terracotta(0x876a61)
+  light_gray_terracotta: terracotta(0x876a61),
+  // v5
+  granite: rocky(0x9a6b58),
+  diorite: rocky(0xbdbcbc, 0.8, 1.06),
+  andesite: rocky(0x8a8a8c),
+  tuff: rocky(0x6d6d65),
+  clay: rocky(0xa0a6b3, 0.92, 1.06),
+  coal_ore: ore(false, 0x2b2b2b),
+  deepslate_coal_ore: ore(true, 0x1f1f1f),
+  iron_ore: ore(false, 0xd8af93),
+  deepslate_iron_ore: ore(true, 0xc9a083),
+  copper_ore: ore(false, 0xc1714b),
+  deepslate_copper_ore: ore(true, 0xb36a44),
+  gold_ore: ore(false, 0xf3d64a),
+  deepslate_gold_ore: ore(true, 0xe8c63c),
+  redstone_ore: ore(false, 0xb4120e),
+  deepslate_redstone_ore: ore(true, 0xa8100c),
+  emerald_ore: ore(false, 0x17c544, 3),
+  deepslate_emerald_ore: ore(true, 0x14b43c, 3),
+  lapis_ore: ore(false, 0x2349a8),
+  deepslate_lapis_ore: ore(true, 0x2040a0),
+  diamond_ore: ore(false, 0x5decde, 4),
+  deepslate_diamond_ore: ore(true, 0x4fdccf, 4),
+  raw_iron_block: rawBlock(0xa6876b),
+  raw_copper_block: rawBlock(0x9a5a3e),
+  oak_log: logSide(0x6b5132),
+  spruce_log: logSide(0x3b2a19),
+  spruce_log_top: logEnd(0x735532, 0x3b2a19),
+  birch_log: birchLog,
+  birch_log_top: logEnd(0xc4b07b, 0xd8d7d2),
+  jungle_log: logSide(0x56451f, 0.5),
+  jungle_log_top: logEnd(0xa7784c, 0x56451f),
+  acacia_log: logSide(0x676157),
+  acacia_log_top: logEnd(0xb2603a, 0x676157),
+  dark_oak_log: logSide(0x3c2e1a, 0.7),
+  dark_oak_log_top: logEnd(0x4f3b22, 0x3c2e1a),
+  mangrove_log: logSide(0x54432f),
+  mangrove_log_top: logEnd(0x6e3a32, 0x54432f),
+  cherry_log: logSide(0x37202a),
+  cherry_log_top: logEnd(0xd59b98, 0x37202a),
+  pale_oak_log: logSide(0x5b534c),
+  pale_oak_log_top: logEnd(0xe6dbd5, 0x5b534c),
+  spruce_leaves: leavesOf(0x5f945f, false),
+  birch_leaves: leavesOf(0x7da353, false),
+  jungle_leaves: leavesOf(0xa8a8a8, true),
+  acacia_leaves: leavesOf(0x9a9a9a, true),
+  dark_oak_leaves: leavesOf(0x9a9a9a, true),
+  mangrove_leaves: leavesOf(0xa0a0a0, true),
+  cherry_leaves: leavesOf(0xeaa9c8, false),
+  pale_oak_leaves: leavesOf(0xa6aa9e, false),
+  azalea_leaves: leavesOf(0x5c7c2c, false),
+  flowering_azalea_leaves: leavesOf(0x5c7c2c, false, 0xd77fd2),
+  mushroom_stem: mushroomStem,
+  red_mushroom_block: mushroomCap(0xc02a26, true),
+  brown_mushroom_block: mushroomCap(0x957155, false),
+  mangrove_roots: mangroveRoots,
+  muddy_mangrove_roots: muddyMangroveRoots,
+  rooted_dirt: rootedDirt,
+  bee_nest: beeNestSide,
+  bee_nest_top: beeNestTop,
+  creaking_heart: creakingHeart,
+  moss_carpet: carpet(0x5a7a2c),
+  pale_moss_carpet: carpet(0x9da396),
+  vine,
+  pale_hanging_moss: hangingMoss,
+  mangrove_propagule: propagule,
+  cocoa
 } satisfies Record<string, (c: Canvas, r: () => number) => void>
 
 export type TextureName = keyof typeof PAINTERS
@@ -445,12 +685,18 @@ export const enum Tint {
   water = 3
 }
 
-/** 纹理层号 → 染色种类 */
+/** 第 3 位：镂空纹理（v5，十字形植物）。alpha < 0.5 的像素丢弃，其余整张按染色种类染色 */
+export const CUTOUT = 4
+
+/** 纹理层号 → 染色种类（| CUTOUT） */
 export const TINT_BY_LAYER: Uint8Array = (() => {
   const t = new Uint8Array(TEXTURE_COUNT)
   t[TEXTURE_LAYER.grass_top] = Tint.grass
   t[TEXTURE_LAYER.grass_side] = Tint.grass
   t[TEXTURE_LAYER.leaves] = Tint.foliage
   t[TEXTURE_LAYER.water] = Tint.water
+  for (const n of ['jungle_leaves', 'acacia_leaves', 'dark_oak_leaves', 'mangrove_leaves'] as const) t[TEXTURE_LAYER[n]] = Tint.foliage
+  t[TEXTURE_LAYER.vine] = Tint.foliage | CUTOUT
+  for (const n of ['pale_hanging_moss', 'mangrove_propagule', 'cocoa'] as const) t[TEXTURE_LAYER[n]] = CUTOUT
   return t
 })()

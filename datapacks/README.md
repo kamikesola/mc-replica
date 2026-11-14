@@ -2,9 +2,9 @@
 
 这个目录下的内容不会提交到 git（原版数据归 Mojang 所有）。
 
-## 加载原版 1.21.1 的世界生成数据
+## 加载原版 1.21.4 的世界生成数据
 
-1. 找到你自己的客户端 jar：`.minecraft/versions/1.21.1/1.21.1.jar`，它就是一个 zip。
+1. 找到你自己的客户端 jar：`.minecraft/versions/1.21.4/1.21.4.jar`，它就是一个 zip。
 2. 把里面 `data/minecraft/worldgen/` 拷出来，下面两种放法都可以：
 
 ```text
@@ -15,6 +15,8 @@ datapacks/
       density_function/...
       noise_settings/...
       biome/...               ← v4：生物群系的温度、湿度、颜色
+      configured_feature/...  ← v5：地物（矿石、树……）
+      placed_feature/...      ← v5：地物的放置规则
 ```
 
 ```text
@@ -29,7 +31,7 @@ datapacks/
 3. 重启 `npm run dev`。菜单上会显示当前用的 noise_settings，
    菜单的“世界设置”里会出现 `minecraft:overworld` 等 7 个原版 noise_settings。
 
-只读取 `noise`、`density_function`、`noise_settings`、`biome`（v4 起）四个子目录，其他目录（structure、configured_feature……）会被忽略，
+只读取 `noise`、`density_function`、`noise_settings`、`biome`（v4 起）、`configured_feature` 和 `placed_feature`（v5 起）六个子目录，其他目录（structure、template_pool……）会被忽略，
 也不会被打包进页面。
 
 ## 核对生物群系（可选）

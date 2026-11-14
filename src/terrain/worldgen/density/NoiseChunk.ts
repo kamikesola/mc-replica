@@ -29,6 +29,7 @@ const floorDiv = (a: number, b: number) => Math.floor(a / b)
 
 export class NoiseChunk {
   readonly fn: DensityFunction
+  private readonly visitor: ReturnType<typeof createVisitor>
   /** 统计：插值角点、flat 缓存实际做了多少次底层求值 */
   readonly stats = { interpolatedCorners: 0, flatCacheCells: 0 }
 
@@ -39,7 +40,7 @@ export class NoiseChunk {
     if (region.x0 % region.cellWidth !== 0 || region.z0 % region.cellWidth !== 0) {
       throw new Error('区域起点必须对齐到 cellWidth')
     }
-    const visitor = createVisitor((fn) => {
+    const visitor = (this.visitor = createVisitor((fn) => {
       if (!(fn instanceof Marker)) return fn
       switch (fn.type) {
         case 'interpolated':
@@ -51,8 +52,13 @@ export class NoiseChunk {
         default:
           return fn.argument // cache_once / cache_all_in_cell：只影响性能
       }
-    })
+    }))
     this.fn = wired.mapAll(visitor)
+  }
+
+  /** 用同一套插值 / 缓存规则包装另一个密度函数（v5：矿脉的 vein_toggle 等，原版 NoiseChunk.wrap） */
+  wrap(fn: DensityFunction): DensityFunction {
+    return fn.mapAll(this.visitor)
   }
 
   /**

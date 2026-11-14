@@ -84,24 +84,121 @@ export function fitness(p: ParameterPoint, t: TargetPoint): number {
 /**
  * 参数表：找最近的一项。
  * 原版用 R 树加速，并且会从“上一次的结果”开始找；距离完全相同（平局）时结果取决于查找顺序，
- * 原版自己在不同线程里也可能不同。这里按表的顺序找第一个最小的（原版的 findValueBruteForce）。
- * 为了快，先按“温度 + 湿度”两维的下界剪枝。
+ * 原版自己在不同线程里也可能不同。这里的结果固定为“按表的顺序第一个最小的”（原版的 findValueBruteForce）。
+ *
+ * v5：逐项比较一次要 160 µs（7593 项），地物的 biome 过滤要查很多次，太慢。
+ * 现在先把表建成一棵包围盒树（每个节点记下子项 7 个维度的最小 / 最大值），查找时先算到包围盒的距离下界，
+ * 下界比当前最好的还大就整棵子树跳过；距离相等时比较表里的序号，所以结果和逐项比较完全一样。
  */
+interface BoxNode {
+  min: Float64Array
+  max: Float64Array
+  children: BoxNode[] | null
+  /** 叶子：表里的序号 */
+  items: number[] | null
+}
+
+const DIMS = 7
+
 export class ParameterList<T> {
-  constructor(readonly values: [ParameterPoint, T][]) {}
+  private readonly lo: Float64Array
+  private readonly hi: Float64Array
+  private readonly root: BoxNode
+
+  constructor(readonly values: [ParameterPoint, T][]) {
+    const n = values.length
+    this.lo = new Float64Array(n * DIMS)
+    this.hi = new Float64Array(n * DIMS)
+    values.forEach(([p], i) => {
+      const ps = [p.temperature, p.humidity, p.continentalness, p.erosion, p.depth, p.weirdness]
+      for (let d = 0; d < 6; d++) {
+        this.lo[i * DIMS + d] = ps[d].min
+        this.hi[i * DIMS + d] = ps[d].max
+      }
+      this.lo[i * DIMS + 6] = this.hi[i * DIMS + 6] = p.offset
+    })
+    this.root = this.build(values.map((_, i) => i))
+  }
+
+  private build(items: number[]): BoxNode {
+    const min = new Float64Array(DIMS).fill(Infinity)
+    const max = new Float64Array(DIMS).fill(-Infinity)
+    for (const i of items)
+      for (let d = 0; d < DIMS; d++) {
+        min[d] = Math.min(min[d], this.lo[i * DIMS + d])
+        max[d] = Math.max(max[d], this.hi[i * DIMS + d])
+      }
+    if (items.length <= 8) return { min, max, children: null, items }
+    // 按中心点分布最散的那一维排序，切成 6 份
+    let best = 0
+    let spread = -1
+    for (let d = 0; d < DIMS; d++) {
+      let a = Infinity
+      let b = -Infinity
+      for (const i of items) {
+        const c = this.lo[i * DIMS + d] + this.hi[i * DIMS + d]
+        a = Math.min(a, c)
+        b = Math.max(b, c)
+      }
+      if (b - a > spread) {
+        spread = b - a
+        best = d
+      }
+    }
+    const sorted = items.slice().sort((x, y) => this.lo[x * DIMS + best] + this.hi[x * DIMS + best] - (this.lo[y * DIMS + best] + this.hi[y * DIMS + best]))
+    const per = Math.ceil(sorted.length / 6)
+    const children: BoxNode[] = []
+    for (let k = 0; k < sorted.length; k += per) children.push(this.build(sorted.slice(k, k + per)))
+    return { min, max, children, items: null }
+  }
 
   find(t: TargetPoint): T {
+    const target = [t[0], t[1], t[2], t[3], t[4], t[5], 0]
+    let best = Infinity
+    let bestIdx = 0
+    const lower = (min: Float64Array, max: Float64Array) => {
+      let s = 0
+      for (let d = 0; d < DIMS; d++) {
+        const v = target[d]
+        const e = v < min[d] ? min[d] - v : v > max[d] ? v - max[d] : 0
+        s += e * e
+      }
+      return s
+    }
+    const visit = (node: BoxNode) => {
+      if (node.items) {
+        for (const i of node.items) {
+          let s = 0
+          for (let d = 0; d < DIMS; d++) {
+            const v = target[d]
+            const lo = this.lo[i * DIMS + d]
+            const hi = this.hi[i * DIMS + d]
+            const e = v < lo ? lo - v : v > hi ? v - hi : 0
+            s += e * e
+          }
+          if (s < best || (s === best && i < bestIdx)) {
+            best = s
+            bestIdx = i
+          }
+        }
+        return
+      }
+      const kids = node.children!.map((c) => ({ c, lb: lower(c.min, c.max) })).sort((a, b) => a.lb - b.lb)
+      for (const { c, lb } of kids) {
+        if (lb > best) break
+        visit(c)
+      }
+    }
+    visit(this.root)
+    return this.values[bestIdx][1]
+  }
+
+  /** 逐项比较的版本（测试用来对照） */
+  findBruteForce(t: TargetPoint): T {
     let best = Infinity
     let result = this.values[0][1]
     for (const [p, v] of this.values) {
-      // 剪枝：只算两维就已经比当前最好的大了，不可能更近
-      const a = p.temperature.distance(t[0])
-      let d = a * a
-      if (d >= best) continue
-      const b = p.humidity.distance(t[1])
-      d += b * b
-      if (d >= best) continue
-      d = fitness(p, t)
+      const d = fitness(p, t)
       if (d < best) {
         best = d
         result = v

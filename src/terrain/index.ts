@@ -144,7 +144,7 @@ export default class Terrain {
     const generation = this.generation
     this.loading.add(key)
     this.pool
-      .call('chunk', { cx, cz, greedy: this.greedy })
+      .call('chunk', { cx, cz, greedy: this.greedy }, regionAffinity(cx, cz))
       .then((data) => {
         if (generation !== this.generation) return // 期间换了种子，结果作废
         this.loading.delete(key)
@@ -377,4 +377,11 @@ export default class Terrain {
       quads
     }
   }
+}
+
+/** 区块所在的装饰区域（见 worker/pipeline.ts 的 REGION）→ 一个整数，用来挑 Worker */
+function regionAffinity(cx: number, cz: number): number {
+  const rx = Math.floor(cx / 4)
+  const rz = Math.floor(cz / 4)
+  return (Math.imul(rx, 73856093) ^ Math.imul(rz, 19349663)) >>> 0
 }

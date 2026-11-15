@@ -2,6 +2,37 @@
 
 每个版本对应一个 git tag 和一篇文章。数字来自 `tools/` 下的脚本或 `tests/` 里的测试，可以自己复现。
 
+## v5.2 · 下界、末地与收尾
+
+文章：[docs/articles/v5.2-下界、末地与收尾.md](docs/articles/v5.2-下界、末地与收尾.md) · 日志：[docs/notes/v5.2-notes.md](docs/notes/v5.2-notes.md)
+
+**修复**
+
+- 下界、末地的地形和群系：按 `legacy_random_source` 选随机状态（`Worldgen.stateFor`）；实心方块用 `default_block`；
+  末地群系按 `TheEndBiomeSource`。关掉地物时和原版 100% 一致（之前约 60%）
+- 滴水石簇放水洼时漏了“脚下也要是石头或水”的条件
+- `fixed_placement` 只留当前区块里的位置
+- 雕刻器不再只限主世界（下界有 `nether_cave`）
+
+**新增**
+
+- 下界雕刻器 `nether_cave`
+- 下界地物（`feature/nether.ts`）：glowstone_blob、basalt_pillar、basalt_columns、delta_feature、netherrack_replace_blobs、
+  scattered_ore、huge_fungus、nether_forest_vegetation、weeping_vines、twisting_vines；放置修饰器 `count_on_every_layer`
+- 末地地物（`feature/end.ts`）：end_spike、end_platform、end_island、chorus_plant、end_gateway
+- 化石（`feature/fossil.ts`）：结构模板 + 腐烂 / 保护 / 规则处理器；数据包新目录 `structure/`、`worldgen/processor_list/`
+- 气泡柱（岩浆块、灵魂沙上方的水源）
+- 32 种新方块（共 234 种）；新形状 `none`（气泡柱只画水）
+- 下界、末地的天空色；下界从基岩天花板下面找出生点
+- 工具：`make-world.py` 的 `only:` 模式、`tests/featurePacks.ts` 的 `onlyPack`、`structures-to-json.ts`；
+  `diff-areas.ts` / `probe.ts` 支持下界、末地（区域名前缀 `nether:` / `end:`）；`ChunkSource.isolated` 调试开关
+- `tests/feature.test.ts` 按类别对照新增化石、气泡柱、下界植物、萤石、下界矿石、末地
+
+**已知问题**
+
+- 读地形的大地物（滴水石簇、幽匿、玄武岩团块和柱群）和原版的区块生成顺序有关，没法逐格一致
+- 下界的天空色只有一种
+
 ## v5.1 · 其余地物与洞穴
 
 文章：[docs/articles/v5.1-其余地物与洞穴.md](docs/articles/v5.1-其余地物与洞穴.md) · 日志：[docs/notes/v5.1-notes.md](docs/notes/v5.1-notes.md)

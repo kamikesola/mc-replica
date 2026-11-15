@@ -7,7 +7,7 @@
  * 随机数的消耗顺序因此是交错的（位置1 的 x、z、y、放地物，位置2 的 x、z、y……），
  * 这里用递归 run(i, x, y, z) 得到同样的顺序。
  */
-import { blockPredicate, heightProvider, intProvider, isOutsideBuildHeight, type HeightmapType, type WorldGenLevel } from './core'
+import { blockPredicate, heightProvider, intProvider, isAir, isOutsideBuildHeight, type HeightmapType, type WorldGenLevel } from './core'
 import type { RandomSource } from '../random/RandomSource'
 import { BIOME_INFO_NOISE } from '../biome/Biome'
 
@@ -138,11 +138,51 @@ export function placementModifier(json: unknown): Modifier {
       }
     }
     case 'fixed_placement': {
+      // 只留在当前区块里的那些位置（v5.2：之前漏了，末地平台会在每个区块都放一次）
       const ps = o.positions as Pos[]
-      return () => ps.map((p) => [p[0], p[1], p[2]] as Pos)
+      return (_c, _r, x, _y, z) => ps.filter((p) => p[0] >> 4 === x >> 4 && p[2] >> 4 === z >> 4).map((p) => [p[0], p[1], p[2]] as Pos)
+    }
+    case 'count_on_every_layer': {
+      // 原版 CountOnEveryLayerPlacement（下界）：每一“层”地面放 count 个，直到某一层一个都没有。位置一次全部算好
+      const count = intProvider(o.count)
+      const empty = (b: string) => isAir(b) || b === 'minecraft:water' || b === 'minecraft:lava'
+      return (c, r, x, _y, z) => {
+        const out: Pos[] = []
+        let layer = 0
+        let any: boolean
+        do {
+          any = false
+          for (let j = 0; j < count(r); j++) {
+            const px = r.nextInt(16) + x
+            const pz = r.nextInt(16) + z
+            const top = c.level.getHeight('MOTION_BLOCKING', px, pz)
+            // findOnGroundYPosition：从上往下数第 layer 个“下面不空、这里空”的位置
+            let n = 0
+            let found = -1
+            let above = c.level.getBlock(px, top, pz)
+            for (let y = top; y >= c.level.minY + 1; y--) {
+              const b = c.level.getBlock(px, y - 1, pz)
+              if (!empty(b) && empty(above) && b !== 'minecraft:bedrock') {
+                if (n === layer) {
+                  found = y
+                  break
+                }
+                n++
+              }
+              above = b
+            }
+            if (found >= 0) {
+              out.push([px, found, pz])
+              any = true
+            }
+          }
+          layer++
+        } while (any)
+        return out
+      }
     }
     default:
-      // 还没实现的（count_on_every_layer、carving_mask）：不放。每个地物有自己的随机种子，不影响别的地物
+      // 还没实现的（carving_mask）：不放。每个地物有自己的随机种子，不影响别的地物
       unsupportedModifiers.set(type, (unsupportedModifiers.get(type) ?? 0) + 1)
       return () => []
   }

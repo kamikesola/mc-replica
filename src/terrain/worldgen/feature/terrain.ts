@@ -547,11 +547,10 @@ export function dripstoneCluster(cfg: Record<string, unknown>): FeaturePlacer {
     const b = l.getBlock(x, y, z)
     if (b === WATER || b === 'minecraft:dripstone_block' || b === 'minecraft:pointed_dripstone') return false
     if (l.getBlock(x, y + 1, z) === WATER) return false
-    for (const [dx, dz] of HORIZONTAL) {
-      const n = l.getBlock(x + dx, y, z + dz)
-      if (!isStone(n) && n !== WATER) return false
-    }
-    return true
+    const adjacentOk = (n: string) => isStone(n) || n === WATER
+    for (const [dx, dz] of HORIZONTAL) if (!adjacentOk(l.getBlock(x + dx, y, z + dz))) return false
+    // 下面也要是石头或水（v5.2：v5.1 漏了这一条）
+    return adjacentOk(l.getBlock(x, y - 1, z))
   }
 
   return (l, r, x, y, z) => {

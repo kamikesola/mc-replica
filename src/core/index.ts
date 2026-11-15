@@ -54,6 +54,14 @@ export default class Core {
   }
 
   private viewBlocks = 96
+  /** 天空 / 雾的颜色（v5.2：下界、末地不一样） */
+  private sky = Core.SKY
+
+  /** 换天空色（原版下界用群系的 fog_color，这里按维度给一个固定值） */
+  setSky = (hex: number) => {
+    this.sky = hex
+    this.applyFog()
+  }
   private medium: 'air' | 'water' | 'lava' = 'air'
 
   /** 视距变了，雾也跟着变：在最后一圈区块处完全变成天空色 */
@@ -86,7 +94,7 @@ export default class Core {
       fog.near = 0.25
       fog.far = 1.5
     } else {
-      fog.color.setHex(Core.SKY)
+      fog.color.setHex(this.sky)
       fog.near = this.viewBlocks * 0.6
       fog.far = this.viewBlocks
     }

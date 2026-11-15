@@ -97,6 +97,9 @@ export default class UI {
       `种子 ${info.seed} · ${info.settings}` +
       (vanilla ? '' : ' · 没有检测到原版数据包，正在使用 demo 简化地形（见 datapacks/README.md）')
     this.noiseMap.setFields(info.routerFields)
+    // 维度的天空色（v5.2）：下界取下界荒地的 fog_color，末地近乎黑色
+    if (/nether/.test(info.settings)) this.core.setSky(0x330808)
+    else if (/end/.test(info.settings)) this.core.setSky(0x14101c)
     this.setDistance(this.terrain.distance)
   }
 

@@ -252,7 +252,7 @@ function shapedBlocks(out: Builder, blocks: Uint8Array): void {
       for (let x = 0; x < 16; x++) {
         const b = blocks[nIndex(x, y, z)]
         const shape = SHAPE[b]
-        if (shape === 0) continue
+        if (shape === 0 || shape === 4) continue // 4：none（气泡柱，只画水）
         if (shape === 1) {
           const h = SHAPE_HEIGHT[b] / 16
           for (let face = 0; face < 6; face++) {

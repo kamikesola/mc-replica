@@ -52,6 +52,8 @@ export class Worldgen {
   private settingsCache: Map<string, NoiseSettingsInfo> | null = null
   private settingsErrors: string[] = []
   private state: RandomState | null = null
+  /** legacy_random_source = true 的 noise_settings（下界、末地）用的 RandomState（v5.2：之前所有维度共用一个，下界的地形和群系都不对） */
+  private legacyState: RandomState | null = null
   /** 已绑定种子的 router 字段缓存，换种子时清空 */
   private wiredRouter = new Map<string, DensityFunction>()
   /** sampler() 用的“带单点缓存”的版本，换种子时清空 */
@@ -114,6 +116,7 @@ export class Worldgen {
   setSeed(seed: string | bigint): bigint {
     const value = typeof seed === 'bigint' ? seed : parseWorldSeed(seed)
     this.state = new RandomState(this.parser, value)
+    this.legacyState = null
     this.wiredRouter.clear()
     this.cachedSamplers.clear()
     this.surfaceCaches.clear()
@@ -171,7 +174,7 @@ export class Worldgen {
     const id = normalizeId(settingsId)
     if (!this.surfaceSystems.has(id)) {
       const s = this.getSettings(id)
-      const rs = this.randomState
+      const rs = this.stateFor(id)
       this.surfaceSystems.set(
         id,
         s.surfaceRule ? new SurfaceSystem((n) => rs.getOrCreateNoise(n), rs.random, s.surfaceRule, s.defaultBlock, s.seaLevel) : null
@@ -182,11 +185,10 @@ export class Worldgen {
 
   /**
    * 洞穴雕刻器（v5.1，见 carver/Carver.ts）：返回“在某个区块里挖洞”的函数。
-   * 起点区块的群系取 (区块最小角, y = 0) 的噪声群系；群系 JSON 没有 carvers 或者不是主世界类的设置时返回 null。
+   * 起点区块的群系取 (区块最小角, y = 0) 的噪声群系；群系 JSON 都没有 carvers 时返回 null（v5.2 起下界也有：nether_cave）。
    */
   carversAt(settingsId: string): ((t: CarveTarget) => void) | null {
     const id = normalizeId(settingsId)
-    if (!OVERWORLD_LIKE.includes(id.replace('minecraft:', ''))) return null
     const biomes = this.biomes(id)
     const reg = this.registry
     if (!biomes.possible.some((b) => (reg.biome.get(b) as { carvers?: unknown } | undefined)?.carvers)) return null
@@ -290,6 +292,13 @@ export class Worldgen {
     return this.state
   }
 
+  /** 某个 noise_settings 用的 RandomState：原版按 legacy_random_source 选旧的（LegacyRandomSource）或新的（Xoroshiro） */
+  stateFor(settingsId: string): RandomState {
+    if (!this.getSettings(settingsId).legacyRandomSource) return this.randomState
+    this.legacyState ??= new RandomState(this.parser, this.randomState.seed, true)
+    return this.legacyState
+  }
+
   // ---------------------------------------------------------------- 4. 求值
 
   /** 取某个 noise_settings 的 router 字段，已绑定种子 */
@@ -299,7 +308,7 @@ export class Worldgen {
     if (!fn) {
       const raw = this.getSettings(settingsId).router[field as RouterField]
       if (!raw) throw new Error(`${settingsId} 的 noise_router 里没有 ${field}`)
-      fn = this.randomState.wire(raw)
+      fn = this.stateFor(settingsId).wire(raw)
       this.wiredRouter.set(key, fn)
     }
     return fn
@@ -362,12 +371,17 @@ const OVERWORLD_LIKE = ['overworld', 'amplified', 'large_biomes', 'caves', 'floa
  *   noiseBiome(qx, qy, qz)  quart 坐标 → 生物群系（查气候参数表，带缓存）
  *   getBiome(x, y, z)       方块坐标 → 生物群系（原版 BiomeManager 的抖动缩放）
  */
+/** 原版 TheEndBiomeSource.collectPossibleBiomes 的顺序 */
+const END_BIOMES = ['minecraft:the_end', 'minecraft:end_highlands', 'minecraft:end_midlands', 'minecraft:small_end_islands', 'minecraft:end_barrens']
+
 export class BiomeSource {
   /** 可能出现的群系（v5） */
   readonly possible: string[]
   readonly manager: BiomeManager
   private readonly list: ParameterList<string> | null
   private readonly single: string
+  /** 原版末地（v5.2）：TheEndBiomeSource，不查参数表 */
+  private readonly isEnd: boolean
   private readonly climate: ClimateSampler | null
   private readonly cache = new Map<number, string>()
   /**
@@ -389,7 +403,12 @@ export class BiomeSource {
     const params = isMinecraft && OVERWORLD_LIKE.includes(name) ? overworldBiomeParameters({ paleGarden: wg.registry.biome.has('minecraft:pale_garden') }) : isMinecraft && name === 'nether' ? netherBiomeParameters() : null
     this.list = params ? new ParameterList(params) : null
     // 原版 possibleBiomes：参数表里第一次出现的顺序（地物排序要用）
-    this.possible = params ? [...new Set(params.map(([, b]) => b))] : [isMinecraft && name === 'end' ? 'minecraft:the_end' : 'minecraft:plains']
+    this.isEnd = isMinecraft && name === 'end' && wg.registry.biome.has('minecraft:end_highlands')
+    this.possible = params
+      ? [...new Set(params.map(([, b]) => b))]
+      : this.isEnd
+        ? END_BIOMES
+        : [isMinecraft && name === 'end' ? 'minecraft:the_end' : 'minecraft:plains']
     this.single = isMinecraft && name === 'end' ? 'minecraft:the_end' : 'minecraft:plains'
     const r = s.router
     const fields = ['temperature', 'vegetation', 'continents', 'erosion', 'depth', 'ridges'] as const
@@ -419,6 +438,7 @@ export class BiomeSource {
   }
 
   noiseBiome(qx: number, qy: number, qz: number): string {
+    if (this.isEnd) return this.endBiome(qx, qy, qz)
     if (!this.list || !this.climate) return this.single
     qy = Math.min(Math.max(qy, this.minQY), this.maxQY)
     const key = ((qx + 0x100000) * 0x200000 + (qz + 0x100000)) * 256 + (qy + 128)
@@ -430,6 +450,26 @@ export class BiomeSource {
     }
     return b
   }
+
+  /**
+   * 原版 TheEndBiomeSource（v5.2）：主岛（区块到原点距离 ≤ 64）是 the_end；外面按 erosion（end_islands 密度）在
+   * 区块中心的值分成高地、中地、小岛、荒地。
+   */
+  private endBiome(qx: number, qy: number, qz: number): string {
+    const sx = qx >> 2
+    const sz = qz >> 2
+    if (sx * sx + sz * sz <= 4096) return 'minecraft:the_end'
+    const key = (sx + 0x100000) * 0x200000 + (sz + 0x100000)
+    let b = this.cache.get(key)
+    if (b === undefined) {
+      this.endErosion ??= this.wg.sampler({ kind: 'router', settings: this.settingsId, field: 'erosion' })
+      const d = this.endErosion({ blockX: (sx * 2 + 1) * 8, blockY: qy * 4, blockZ: (sz * 2 + 1) * 8 })
+      b = d > 0.25 ? 'minecraft:end_highlands' : d >= -0.0625 ? 'minecraft:end_midlands' : d < -0.21875 ? 'minecraft:small_end_islands' : 'minecraft:end_barrens'
+      this.cache.set(key, b)
+    }
+    return b
+  }
+  private endErosion: ((c: { blockX: number; blockY: number; blockZ: number }) => number) | null = null
 
   /** sampleClimate 的快速版：5 个平面的值按列缓存，只算 depth */
   private sampleFlat(qx: number, qy: number, qz: number): TargetPoint {

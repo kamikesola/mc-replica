@@ -211,9 +211,13 @@ export default class Control {
         const a = (i / Math.max(1, r * 2)) * Math.PI * 2
         const x = Math.floor(Math.cos(a) * r)
         const z = Math.floor(Math.sin(a) * r)
-        const top = this.terrain.topSolidY(x, z)
-        if (top === null) return false // 还没加载
-        if (top >= info.seaLevel) {
+        // 下界有基岩天花板：从天花板下面往下找落脚点（v5.2）
+        const top = /nether/.test(info.settings) ? this.terrain.floorBelow(x, z, 120) : this.terrain.topSolidY(x, z)
+        if (top === null) {
+          if (!this.terrain.getChunk(x, z)) return false // 还没加载
+          continue
+        }
+        if (top >= info.seaLevel || /end/.test(info.settings)) {
           this.teleport(x + 0.5, top + 1, z + 0.5)
           return true
         }

@@ -11,5 +11,12 @@ export const CATEGORIES: Record<string, RegExp> = {
   苔藓和黏土: /moss_block|clay/,
   滴水石: /dripstone/,
   幽匿: /sculk/,
-  沙漠植物: /cactus|dead_bush|sugar_cane/
+  沙漠植物: /cactus|dead_bush|sugar_cane/,
+  // v5.2
+  化石: /bone_block/,
+  气泡柱: /bubble_column/,
+  下界植物: /crimson|warped|nether_wart|weeping|twisting|nether_sprouts|shroomlight/,
+  萤石: /glowstone/,
+  下界矿石: /nether_quartz_ore|nether_gold_ore|ancient_debris/,
+  末地: /end_stone|obsidian|chorus|iron_bars|end_gateway/
 }

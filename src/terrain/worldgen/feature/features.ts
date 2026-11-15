@@ -11,6 +11,9 @@ import { PlacedFeature, placementModifier, type FeaturePlacer, type PlacementCon
 import { treeFeature } from './tree'
 import { sculkPatch } from './sculk'
 import { coral } from './coral'
+import { fossil } from './fossil'
+import { basaltColumns, basaltPillar, delta, glowstoneBlob, hugeFungus, netherForestVegetation, replaceBlobs, scatteredOre, twistingVines, weepingVines } from './nether'
+import { chorusPlant, endGateway, endIsland, endPlatform, endSpike } from './end'
 import { blueIce, iceberg, desertWell, dripstoneCluster, forestRock, geode, iceSpike, lake, largeDripstone, monsterRoom, pointedDripstone, spring, underwaterMagma } from './terrain'
 import { bamboo, blockColumn, kelp, multifaceGrowth, randomPatch, rootSystem, seaPickle, seagrass, simpleBlock, vegetationPatch, vines } from './vegetation'
 import { lerp, sin } from '../math/Mth'
@@ -382,6 +385,40 @@ export class FeatureRegistry {
         return dripstoneCluster(cfg)
       case 'large_dripstone':
         return largeDripstone(cfg)
+      // v5.2：下界
+      case 'glowstone_blob':
+        return glowstoneBlob()
+      case 'basalt_pillar':
+        return basaltPillar()
+      case 'basalt_columns':
+        return basaltColumns(cfg)
+      case 'delta_feature':
+        return delta(cfg)
+      case 'netherrack_replace_blobs':
+        return replaceBlobs(cfg)
+      case 'scattered_ore':
+        return scatteredOre(cfg)
+      case 'huge_fungus':
+        return hugeFungus(cfg)
+      case 'nether_forest_vegetation':
+        return netherForestVegetation(cfg)
+      case 'weeping_vines':
+        return weepingVines()
+      case 'twisting_vines':
+        return twistingVines(cfg)
+      // v5.2：末地
+      case 'end_spike':
+        return endSpike()
+      case 'end_platform':
+        return endPlatform()
+      case 'end_island':
+        return endIsland()
+      case 'chorus_plant':
+        return chorusPlant()
+      case 'end_gateway':
+        return endGateway()
+      case 'fossil':
+        return fossil(cfg, (id) => this.registry.structure.get(id), (id) => this.registry.processorList.get(id))
       case 'coral_tree':
         return coral('tree')
       case 'coral_claw':

@@ -10,6 +10,7 @@
   nocarve  去掉雕刻器（我们还没做），地物保留
   ores     只留第 6 步（矿石），去掉雕刻器
   trees    只有一个 test_trees 地物：每个区块从所有树里随机挑一种（和 tests/featurePacks.ts 完全一样）
+  only:a,b 只留列出的地物（placed_feature 名，不带 minecraft:），保留雕刻器（v5.2，和 tests/featurePacks.ts 的 onlyPack 一样）
 
 原版 worldgen 目录：你自己 jar 里的 data/minecraft/worldgen（或者 datapacks/vanilla/worldgen）。
 接着按 tools/vanilla/README.md 启动服务端、forceload、存盘。
@@ -17,7 +18,8 @@
 import json, os, sys, glob, shutil
 
 server, name, mode, W = sys.argv[1:5]
-root = os.path.join(server, name, 'datapacks', mode)
+keep = set('minecraft:' + x for x in mode[5:].split(',')) if mode.startswith('only:') else None
+root = os.path.join(server, name, 'datapacks', 'only' if keep else mode)
 shutil.rmtree(os.path.join(server, name), ignore_errors=True)
 files = {}
 if mode == 'trees':
@@ -31,7 +33,8 @@ if mode == 'trees':
         {'type': 'minecraft:heightmap', 'heightmap': 'OCEAN_FLOOR'}, {'type': 'minecraft:biome'}]}
 for f in glob.glob(W + '/biome/*.json'):
     d = json.load(open(f))
-    if mode != 'carvers' and mode != 'full': d['carvers'] = []
+    if mode != 'carvers' and mode != 'full' and not keep: d['carvers'] = []
+    if keep: d['features'] = [[x for x in l if x in keep] for l in d['features']]
     if mode in ('bare', 'carvers'): d['features'] = []
     if mode == 'ores': d['features'] = [l if i == 6 else [] for i, l in enumerate(d['features'])]
     if mode == 'trees': d['features'] = [[] for _ in range(9)] + [['minecraft:test_trees']]
@@ -40,5 +43,5 @@ for rel, d in files.items():
     p = os.path.join(root, 'data', 'minecraft', rel)
     os.makedirs(os.path.dirname(p), exist_ok=True)
     json.dump(d, open(p, 'w'))
-json.dump({'pack': {'pack_format': 61, 'description': mode}}, open(os.path.join(root, 'pack.mcmeta'), 'w'))
+json.dump({'pack': {'pack_format': 61, 'description': 'only' if keep else mode}}, open(os.path.join(root, 'pack.mcmeta'), 'w'))
 print('写好了', root)

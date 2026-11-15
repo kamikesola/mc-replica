@@ -13,8 +13,12 @@ import { Worldgen } from '../../src/terrain/worldgen/Worldgen'
 import { vanillaPack } from '../../tests/loadDatapack'
 import { loadChunk } from './anvil'
 
-export function diffChunks(world: string, wg: Worldgen, chunks: [number, number][], opts: { features?: boolean } = {}) {
-  const s = wg.getSettings('minecraft:overworld')
+/** 维度 → 存档里的子目录（v5.2） */
+export const DIM_DIR: Record<string, string> = { 'minecraft:overworld': '', 'minecraft:nether': '/DIM-1', 'minecraft:end': '/DIM1' }
+
+export function diffChunks(world: string, wg: Worldgen, chunks: [number, number][], opts: { features?: boolean; dim?: string } = {}) {
+  const dim = opts.dim ?? 'minecraft:overworld'
+  const s = wg.getSettings(dim)
   const pairs = new Map<string, number>()
   /** 每种方块：[原版有几格, 我们有几格, 两边都是它的格数] */
   const perBlock = new Map<string, [number, number, number]>()
@@ -27,10 +31,10 @@ export function diffChunks(world: string, wg: Worldgen, chunks: [number, number]
   let total = 0
   let compared = 0
   for (const [cx, cz] of chunks) {
-    const v = loadChunk(world, cx, cz)
+    const v = loadChunk(world + DIM_DIR[dim], cx, cz)
     if (!v || v.status !== 'minecraft:full') continue
     compared++
-    const c = generateChunk(wg, 'minecraft:overworld', s, cx, cz, { features: opts.features })
+    const c = generateChunk(wg, dim, s, cx, cz, { features: opts.features })
     c.sections.forEach((d, sy) => {
       const sec = Section.fromData(d)
       for (let i = 0; i < 4096; i++) {

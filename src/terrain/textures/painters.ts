@@ -744,6 +744,84 @@ const coralFan = (color: number) =>
     for (let y = 6; y < 16; y++) for (let x = 0; x < 16; x++) if (Math.abs(x - 7.5) < (16 - y) * 0.75 && (x + y) % 3 !== 0) set(x, y)
   })
 
+// ---------------------------------------------------------------- v5.2：下界、末地、气泡柱
+
+const netherrack = (c: Canvas, r: () => number) => {
+  speckle(c, hex(0x6e2a2a), 0.12, r)
+  blotches(c, () => shade(hex(0x6e2a2a), 0.7 + r() * 0.1), 14, 2, r)
+  blotches(c, () => shade(hex(0x8e3a36), 1.05), 8, 2, r)
+}
+const soulSand = (c: Canvas, r: () => number) => {
+  speckle(c, hex(0x52402e), 0.1, r)
+  // 灵魂沙上的“脸”：几个暗色的小坑
+  for (let i = 0; i < 4; i++) {
+    const x = 2 + Math.floor(r() * 11)
+    const y = 2 + Math.floor(r() * 11)
+    c.set(x, y, hex(0x2e2218), 255)
+    c.set(x + 2, y, hex(0x2e2218), 255)
+    c.set(x + 1, y + 2, hex(0x2e2218), 255)
+  }
+}
+const basaltSide = (c: Canvas, r: () => number) => c.fill((x) => shade(hex(0x4a4a50), (x % 4 === 0 ? 0.75 : 1) * (0.9 + r() * 0.15)))
+const basaltTop = (c: Canvas, r: () => number) => c.fill((x, y) => shade(hex(0x5a5a60), (Math.max(Math.abs(x - 7.5), Math.abs(y - 7.5)) % 3 < 1 ? 0.8 : 1) * (0.92 + r() * 0.1)))
+const netherOre = (color: number) => (c: Canvas, r: () => number) => {
+  netherrack(c, r)
+  for (let i = 0; i < 6; i++) {
+    const x = 2 + Math.floor(r() * 12)
+    const y = 2 + Math.floor(r() * 12)
+    c.set(x, y, shade(hex(color), 0.9 + r() * 0.3))
+    c.set(x + 1, y, shade(hex(color), 0.8))
+  }
+}
+const debrisSide = (c: Canvas, r: () => number) => c.fill((x, y) => shade(hex(0x5e4238), ((x + y * 3) % 7 < 2 ? 0.7 : 1) * (0.9 + r() * 0.15)))
+const debrisTop = (c: Canvas, r: () => number) => c.fill((x, y) => shade(hex(0x6a4c40), (Math.hypot(x - 7.5, y - 7.5) % 4 < 1.2 ? 0.75 : 1) * (0.9 + r() * 0.12)))
+const nyliumTop = (color: number) => (c: Canvas, r: () => number) => {
+  speckle(c, hex(color), 0.12, r)
+  blotches(c, () => shade(hex(color), 1.2), 6, 2, r)
+}
+const nyliumSide = (color: number) => (c: Canvas, r: () => number) => {
+  netherrack(c, r)
+  for (let x = 0; x < 16; x++) {
+    const h = 3 + Math.floor(r() * 3)
+    for (let y = 0; y < h; y++) c.set(x, y, shade(hex(color), 0.85 + r() * 0.3))
+  }
+}
+const stemSide = (bark: number, glow: number) => (c: Canvas, r: () => number) => {
+  logSide(bark)(c, r)
+  for (let i = 0; i < 10; i++) c.set(Math.floor(r() * 16), Math.floor(r() * 16), shade(hex(glow), 0.9 + r() * 0.3))
+}
+const fungus = (color: number) =>
+  sprite(color, (set) => {
+    for (let y = 9; y < 16; y++) set(7, y, 0.7)
+    for (let x = 3; x <= 11; x++) for (let y = 4; y <= 8; y++) if (Math.abs(x - 7) <= 4 - Math.max(0, 6 - y)) set(x, y)
+  })
+const netherRoots = (color: number) =>
+  sprite(color, (set, r) => {
+    for (let x = 2; x < 14; x += 2) {
+      const h = 6 + Math.floor(r() * 8)
+      for (let y = 15; y > 15 - h; y--) set(x + (y % 3 === 0 ? 1 : 0), y)
+    }
+  })
+const netherVines = (color: number) =>
+  sprite(color, (set) => {
+    for (const x of [5, 9]) for (let y = 0; y < 16; y++) set(x + (y % 4 < 2 ? 0 : 1), y)
+  })
+const fire = (color: number) =>
+  sprite(color, (set, r) => {
+    for (let x = 1; x < 15; x++) {
+      const h = 6 + Math.floor(r() * 9)
+      for (let y = 15; y > 15 - h; y--) set(x, y, 0.75 + (15 - y) / 30)
+    }
+  })
+const ironBars = sprite(0x9a9a9a, (set) => {
+  for (const x of [1, 6, 9, 14]) for (let y = 0; y < 16; y++) set(x, y)
+  for (const y of [0, 15]) for (let x = 0; x < 16; x++) set(x, y)
+})
+/** 气泡柱只画水，这张纹理用不到（形状是 none） */
+const bubbles = sprite(0xd8e8ff, (set, r) => {
+  for (let i = 0; i < 8; i++) set(Math.floor(r() * 16), Math.floor(r() * 16))
+})
+
 export const PAINTERS = {
   stone,
   deepslate,
@@ -949,7 +1027,46 @@ export const PAINTERS = {
   horn_coral_block: rocky(0xe0c83a, 0.85, 1.12),
   horn_coral: coral(0xe0c83a),
   horn_coral_fan: coralFan(0xe0c83a),
-  horn_coral_wall_fan: coralFan(0xe0c83a)
+  horn_coral_wall_fan: coralFan(0xe0c83a),
+  // v5.2
+  netherrack: netherrack,
+  soul_sand: soulSand,
+  soul_soil: rocky(0x4a3a2e, 0.85, 1.1),
+  basalt: basaltSide,
+  basalt_top: basaltTop,
+  blackstone: rocky(0x2a2428, 0.8, 1.25),
+  nether_gold_ore: netherOre(0xf6d03a),
+  nether_quartz_ore: netherOre(0xece4dc),
+  ancient_debris: debrisSide,
+  ancient_debris_top: debrisTop,
+  crimson_nylium: nyliumSide(0x9a2626),
+  crimson_nylium_top: nyliumTop(0x9a2626),
+  warped_nylium: nyliumSide(0x2b8a7c),
+  warped_nylium_top: nyliumTop(0x2b8a7c),
+  crimson_stem: stemSide(0x6a2a3a, 0xc8323a),
+  crimson_stem_top: logEnd(0x8e3a4a, 0x6a2a3a),
+  warped_stem: stemSide(0x3a3a4e, 0x2ac8b8),
+  warped_stem_top: logEnd(0x3a8a80, 0x3a3a4e),
+  nether_wart_block: rocky(0x7a0e0e, 0.8, 1.2),
+  warped_wart_block: rocky(0x167a78, 0.8, 1.2),
+  shroomlight: rocky(0xf09a4a, 0.85, 1.2),
+  crimson_fungus: fungus(0xb02a2a),
+  warped_fungus: fungus(0x2ab0a0),
+  crimson_roots: netherRoots(0x9a1e2a),
+  warped_roots: netherRoots(0x1e9a8a),
+  nether_sprouts: grassBlades(0x1e9a8a, 8),
+  weeping_vines: netherVines(0xa0242a),
+  weeping_vines_plant: netherVines(0xa0242a),
+  twisting_vines: netherVines(0x1e9a8a),
+  twisting_vines_plant: netherVines(0x1e9a8a),
+  fire: fire(0xf08a1a),
+  soul_fire: fire(0x3ad8e8),
+  end_stone: rocky(0xdcdca0, 0.88, 1.06),
+  chorus_plant: rocky(0x6a4a6a, 0.8, 1.25),
+  chorus_flower: rocky(0x9a7a9a, 0.85, 1.15),
+  end_gateway: spawner,
+  iron_bars: ironBars,
+  bubble_column: bubbles
 } satisfies Record<string, (c: Canvas, r: () => number) => void>
 
 export type TextureName = keyof typeof PAINTERS
@@ -1064,5 +1181,19 @@ export const TINT_BY_LAYER: Uint8Array = (() => {
   t[TEXTURE_LAYER.horn_coral] = CUTOUT
   t[TEXTURE_LAYER.horn_coral_fan] = CUTOUT
   t[TEXTURE_LAYER.horn_coral_wall_fan] = CUTOUT
+  // v5.2
+  t[TEXTURE_LAYER.bubble_column] = CUTOUT
+  t[TEXTURE_LAYER.crimson_fungus] = CUTOUT
+  t[TEXTURE_LAYER.warped_fungus] = CUTOUT
+  t[TEXTURE_LAYER.crimson_roots] = CUTOUT
+  t[TEXTURE_LAYER.warped_roots] = CUTOUT
+  t[TEXTURE_LAYER.nether_sprouts] = CUTOUT
+  t[TEXTURE_LAYER.weeping_vines] = CUTOUT
+  t[TEXTURE_LAYER.weeping_vines_plant] = CUTOUT
+  t[TEXTURE_LAYER.twisting_vines] = CUTOUT
+  t[TEXTURE_LAYER.twisting_vines_plant] = CUTOUT
+  t[TEXTURE_LAYER.fire] = CUTOUT
+  t[TEXTURE_LAYER.soul_fire] = CUTOUT
+  t[TEXTURE_LAYER.iron_bars] = CUTOUT
   return t
 })()

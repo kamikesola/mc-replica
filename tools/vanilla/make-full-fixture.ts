@@ -15,19 +15,28 @@ import { loadChunk } from './anvil'
 import { CATEGORIES } from '../../tests/featureCategories'
 
 const [world, ...files] = process.argv.slice(2)
+// 维度（v5.2）：区域名前面的 nether: / end:
+const DIMS: Record<string, [string, string]> = { overworld: ['minecraft:overworld', ''], nether: ['minecraft:nether', '/DIM-1'], end: ['minecraft:end', '/DIM1'] }
 const wg = new Worldgen([vanillaPack()!])
 wg.setSeed(42n)
-const src = chunkSource(wg, 'minecraft:overworld', wg.getSettings('minecraft:overworld'))
+const sources = new Map<string, ReturnType<typeof chunkSource>>()
+const sourceOf = (dim: string) => {
+  if (!sources.has(dim)) sources.set(dim, chunkSource(wg, dim, wg.getSettings(dim)))
+  return sources.get(dim)!
+}
 const out: Record<string, Record<string, Record<string, number[]>>> = {}
 const taken: Record<string, number> = {}
 for (const f of files)
   for (const line of readFileSync(f, 'utf8').split('\n')) {
     const [name, a, b] = line.trim().split(/\s+/)
     if (!name) continue
+    const prefix = name.includes(':') ? name.split(':')[0] : 'overworld'
+    const [dim, dir] = DIMS[prefix]
+    const src = sourceOf(dim)
     for (let cx = Number(a) - 1; cx < Number(a) + 1; cx++)
       for (let cz = Number(b) - 1; cz < Number(b) + 1; cz++) {
-        const v = loadChunk(world, cx, cz)
-        if (!v || v.status !== 'minecraft:full') continue
+        const v = world.split(',').map((w) => loadChunk(w + dir, cx, cz)).find((c) => c && c.status === 'minecraft:full')
+        if (!v) continue
         const o = src.withDecorations(cx, cz)
         for (const [cat, re] of Object.entries(CATEGORIES)) {
           if ((taken[cat] ?? 0) >= 3) continue
@@ -46,7 +55,7 @@ for (const f of files)
             n++
           }
           if (bad || n === 0) continue
-          ;(out[cat] ??= {})[`${cx},${cz}`] = list
+          ;(out[cat] ??= {})[`${prefix === 'overworld' ? '' : prefix + ':'}${cx},${cz}`] = list
           taken[cat] = (taken[cat] ?? 0) + 1
           console.log(cat, cx, cz, n)
         }

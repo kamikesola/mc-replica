@@ -1,0 +1,9 @@
+nether:warped_forest 0 0
+nether:nether_wastes -16 16
+nether:soul_sand_valley -32 -32
+nether:basalt_deltas 48 -40
+nether:crimson_forest -80 -80
+end:main_island 0 0
+end:platform 6 0
+end:outer_island 70 4
+end:outer_island2 90 -30

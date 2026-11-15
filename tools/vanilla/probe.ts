@@ -11,16 +11,22 @@ import { generateChunk } from '../../src/terrain/worker/surface'
 import { Worldgen } from '../../src/terrain/worldgen/Worldgen'
 import { vanillaPack } from '../../tests/loadDatapack'
 import { loadChunk } from './anvil'
+import { DIM_DIR } from './diff'
+import { onlyPack } from '../../tests/featurePacks'
 
 const [world, a, b, name, max] = process.argv.slice(2)
 const cx = Number(a)
 const cz = Number(b)
 const want = `minecraft:${name}`
-const wg = new Worldgen([vanillaPack()!])
+const vanilla = vanillaPack()!
+// FEATURES=a,b：只放这几个地物（和 make-world.py 的 only: 模式对应）
+const wg = new Worldgen(process.env.FEATURES ? [vanilla, onlyPack(vanilla, process.env.FEATURES.split(','))] : [vanilla])
 wg.setSeed(42n)
-const s = wg.getSettings('minecraft:overworld')
-const v = loadChunk(world, cx, cz)!
-const c = generateChunk(wg, 'minecraft:overworld', s, cx, cz, {})
+// DIM=minecraft:nether / minecraft:end（v5.2）
+const dim = process.env.DIM ?? 'minecraft:overworld'
+const s = wg.getSettings(dim)
+const v = loadChunk(world + DIM_DIR[dim], cx, cz)!
+const c = generateChunk(wg, dim, s, cx, cz, {})
 const ours = new Map<number, string>()
 c.sections.forEach((d, sy) => {
   const sec = Section.fromData(d)
@@ -30,7 +36,7 @@ const norm = (n: string | undefined) => (n ?? 'air').replace('minecraft:', '').r
 const o = (lx: number, y: number, lz: number) => (lx < 0 || lx > 15 || lz < 0 || lz > 15 ? '?' : norm(ours.get((y - s.minY) * 256 + lz * 16 + lx)))
 const van = (lx: number, y: number, lz: number) => (lx < 0 || lx > 15 || lz < 0 || lz > 15 ? '?' : norm(v.blocks[(y - v.minY) * 256 + lz * 16 + lx]))
 let n = 0
-for (let y = s.minY; y < s.minY + 384; y++)
+for (let y = s.minY; y < s.minY + s.height; y++)
   for (let lz = 0; lz < 16; lz++)
     for (let lx = 0; lx < 16; lx++) {
       const A = o(lx, y, lz)

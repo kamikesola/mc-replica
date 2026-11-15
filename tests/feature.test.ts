@@ -142,15 +142,19 @@ test('原版数据：完整的装饰会放下矿石、树和积雪', { skip, tim
 
 const fixture51 = JSON.parse(readFileSync(repoPath('tests/fixtures/features51.json'), 'utf8')) as Record<string, Record<string, Record<string, number[]>>>
 
-test('v5.1 地物和原版完整存档逐格一致（晶洞、地牢、冰山、发光地衣、花、海草、滴水石……）', { skip, timeout: 1_800_000 }, () => {
+test('v5.1 / v5.2 地物和原版完整存档逐格一致（晶洞、地牢、冰山、化石、气泡柱、下界、末地……）', { skip, timeout: 1_800_000 }, () => {
   const wg = new Worldgen([vanilla!])
   wg.setSeed(42n)
-  const src = chunkSource(wg, 'minecraft:overworld', wg.getSettings('minecraft:overworld'))
+  const sources = new Map<string, ReturnType<typeof chunkSource>>()
   let blocks = 0
   for (const [cat, chunks] of Object.entries(fixture51)) {
     const re = CATEGORIES[cat]
     for (const [key, byName] of Object.entries(chunks)) {
-      const [cx, cz] = key.split(',').map(Number)
+      // v5.2：下界、末地的区块写成 nether:cx,cz / end:cx,cz
+      const dim = key.startsWith('nether:') ? 'minecraft:nether' : key.startsWith('end:') ? 'minecraft:end' : 'minecraft:overworld'
+      if (!sources.has(dim)) sources.set(dim, chunkSource(wg, dim, wg.getSettings(dim)))
+      const src = sources.get(dim)!
+      const [cx, cz] = key.replace(/^[a-z]+:/, '').split(',').map(Number)
       const got: Record<string, number[]> = {}
       src.withDecorations(cx, cz).forEach((id, i) => {
         const n = NAME_BY_BLOCK[id]

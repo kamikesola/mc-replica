@@ -23,6 +23,8 @@ export interface WorldGenLevel {
   readonly seaLevel: number
   /** 世界种子（晶洞的噪声要用） */
   readonly seed: bigint
+  /** 有没有天空光（v5.2：下界、末地没有，蘑菇在那里总是“暗处”） */
+  readonly hasSkyLight?: boolean
   getBlock(x: number, y: number, z: number): string
   /** 写方块；超出可写范围（3×3 区块以外、世界上下界以外）时什么也不做，返回 false */
   setBlock(x: number, y: number, z: number, state: string): boolean
@@ -55,6 +57,7 @@ const NON_SOLID = new Set(
     'brown_mushroom', 'red_mushroom', 'sugar_cane', 'kelp', 'kelp_plant', 'lily_pad', 'sweet_berry_bush', 'bamboo_sapling', 'pink_petals',
     'sea_pickle', 'spore_blossom', 'small_dripleaf', 'big_dripleaf_stem', 'small_amethyst_bud', 'medium_amethyst_bud', 'large_amethyst_bud',
     'amethyst_cluster', 'sculk_vein', 'fire', 'soul_fire',
+    'crimson_fungus', 'warped_fungus', 'crimson_roots', 'warped_roots', 'nether_sprouts', 'weeping_vines', 'weeping_vines_plant', 'twisting_vines', 'twisting_vines_plant', 'bubble_column',
     ...['tube', 'brain', 'bubble', 'fire', 'horn'].flatMap((c) => [`${c}_coral`, `${c}_coral_fan`, `${c}_coral_wall_fan`])
   ].map((n) => `minecraft:${n}`)
 )
@@ -81,7 +84,7 @@ export const isSolidRender = (b: string) => isSturdy(b) && !inTag(b, 'minecraft:
 
 /** 一直“含水”的方块（海草、海带、珊瑚……）：原版里它们和水源在同一格 */
 export const ALWAYS_WATERLOGGED = new Set(
-  ['seagrass', 'tall_seagrass', 'kelp', 'kelp_plant', 'sea_pickle', ...['tube', 'brain', 'bubble', 'fire', 'horn'].flatMap((c) => [`${c}_coral`, `${c}_coral_fan`, `${c}_coral_wall_fan`])].map((n) => `minecraft:${n}`)
+  ['seagrass', 'tall_seagrass', 'kelp', 'kelp_plant', 'sea_pickle', 'bubble_column', ...['tube', 'brain', 'bubble', 'fire', 'horn'].flatMap((c) => [`${c}_coral`, `${c}_coral_fan`, `${c}_coral_wall_fan`])].map((n) => `minecraft:${n}`)
 )
 
 /** 原版 getFluidState：这一格有没有水（水方块或者含水的方块） */
@@ -397,7 +400,7 @@ export const isDoublePlant = (b: string) => DOUBLE_PLANTS.has(b)
  * 生成阶段蘑菇处的亮度算不算“暗”（< 13）。原版这时光照还没算完，取到的值和区块生成的先后有关；
  * 对照原版存档：当成“全都亮”最接近（露天的沙滩、草地上不长，见 v5.1 笔记）。
  */
-const MUSHROOM_DARK = (_l: WorldGenLevel, _x: number, _y: number, _z: number) => false
+const MUSHROOM_DARK = (l: WorldGenLevel, _x: number, _y: number, _z: number) => l.hasSkyLight === false
 
 const isDirtOrFarmland = (b: string) => inTag(b, 'minecraft:dirt') || b === 'minecraft:farmland'
 
@@ -418,6 +421,15 @@ export function canSurvive(state: string, level: WorldGenLevel, x: number, y: nu
     case 'pink_tulip': case 'oxeye_daisy': case 'cornflower': case 'lily_of_the_valley': case 'open_eyeblossom': case 'closed_eyeblossom':
     case 'sweet_berry_bush': case 'pink_petals':
       return isDirtOrFarmland(below)
+    // v5.2：下界
+    case 'crimson_fungus': case 'warped_fungus': case 'crimson_roots': case 'warped_roots':
+      return inTag(below, 'minecraft:nylium') || below === 'minecraft:mycelium' || below === 'minecraft:soul_soil' || isDirtOrFarmland(below)
+    case 'nether_sprouts':
+      return inTag(below, 'minecraft:nylium') || below === 'minecraft:soul_soil' || isDirtOrFarmland(below)
+    case 'fire':
+      return isSturdy(below)
+    case 'soul_fire':
+      return inTag(below, 'minecraft:soul_fire_base_blocks')
     case 'azalea': case 'flowering_azalea':
       return inTag(below, 'minecraft:azalea_grows_on')
     case 'dead_bush':

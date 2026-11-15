@@ -283,6 +283,17 @@ export default class Terrain {
     return c.minY
   }
 
+  /** 从 fromY 往下找第一个“脚下实心、身体两格是空的”位置（v5.2：下界有天花板，不能站到顶上去） */
+  floorBelow(x: number, z: number, fromY: number): number | null {
+    const c = this.getChunk(x, z)
+    if (!c) return null
+    for (let y = fromY; y > c.minY + 1; y--) {
+      const at = (yy: number) => this.getBlock(x, yy, z) ?? 0
+      if (isSolid(at(y - 1)) && !isSolid(at(y)) && !isSolid(at(y + 1)) && FLUID_KIND[at(y)] === FluidKind.none) return y - 1
+    }
+    return null
+  }
+
   // ---------------------------------------------------------------- 网格
 
   /** 在主线程重建一个 section 的网格 */

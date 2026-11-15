@@ -44,7 +44,17 @@ cat tools/vanilla/areas.txt tools/vanilla/areas51.txt \
 # 启动服务端，把 full-areas.txt 里的命令逐条输入控制台（每条等几秒），最后 save-all flush、stop
 ```
 
-`make-world.py` 的模式：`bare`（不放地物、不雕刻）、`carvers`（只雕刻）、`ores` / `trees`（只留一类地物）、`full`（原版全部）。
+`make-world.py` 的模式：`bare`（不放地物、不雕刻）、`carvers`（只雕刻）、`ores` / `trees`（只留一类地物）、`full`（原版全部）、
+`only:a,b`（v5.2：只留列出的 placed_feature，保留雕刻器；我们这边用 `diff-areas.ts --features a,b` 或 `FEATURES=a,b probe.ts` 对照）。
+
+下界、末地（v5.2）：`tools/vanilla/areas52.txt` 里的区域名带 `nether:` / `end:` 前缀；forceload 要在对应维度执行：
+
+```text
+execute in minecraft:the_nether run forceload add <x1> <z1> <x2> <z2>
+execute in minecraft:the_end run forceload add <x1> <z1> <x2> <z2>
+```
+
+存档里下界在 `DIM-1/`、末地在 `DIM1/`，比较工具会自己找。
 
 ## 3. 比较
 
@@ -59,6 +69,8 @@ npx tsx tools/vanilla/probe.ts <存档> <cx> <cz> <方块名>     # v5.1：某�
 npx tsx tools/vanilla/make-full-fixture.ts <full 存档> tools/vanilla/areas51.txt tools/vanilla/areas.txt
                                                               # v5.1：重新生成 tests/fixtures/features51.json
 python3 tools/vanilla/gen-tags.py <解包的 jar 目录>          # v5.1：从原版 jar 展开方块标签，写 blockTags.json
+npx tsx tools/vanilla/structures-to-json.ts <jar 里的 data/minecraft/structure> datapacks/vanilla/structure
+                                                              # v5.2：化石的结构模板（.nbt → JSON）
 ```
 
 ## 4. 查原版代码

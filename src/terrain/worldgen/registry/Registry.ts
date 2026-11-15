@@ -22,7 +22,7 @@ import type { NoiseParameters } from '../noise/NormalNoise'
  *
  * 第二种是直接把 jar 里的 data/minecraft 下的内容拷出来时常见的结构。
  */
-export type WorldgenKind = 'noise' | 'density_function' | 'noise_settings' | 'biome' | 'configured_feature' | 'placed_feature' | 'configured_carver'
+export type WorldgenKind = 'noise' | 'density_function' | 'noise_settings' | 'biome' | 'configured_feature' | 'placed_feature' | 'configured_carver' | 'processor_list' | 'structure'
 
 export interface ResourceLocation {
   kind: WorldgenKind
@@ -30,9 +30,12 @@ export interface ResourceLocation {
   id: string
 }
 
-const KINDS = 'noise|density_function|noise_settings|biome|configured_feature|placed_feature|configured_carver'
+const KINDS = 'noise|density_function|noise_settings|biome|configured_feature|placed_feature|configured_carver|processor_list'
 const WITH_NAMESPACE = new RegExp(`(?:^|/)data/([a-z0-9_.-]+)/worldgen/(${KINDS})/(.+)\\.json$`)
 const WITHOUT_NAMESPACE = new RegExp(`(?:^|/)worldgen/(${KINDS})/(.+)\\.json$`)
+/** 结构模板（v5.2，化石）：不在 worldgen 下面，是 data/<命名空间>/structure/…（我们存的是 tools/vanilla/structures-to-json.ts 转成的 JSON） */
+const STRUCTURE_NS = /(?:^|\/)data\/([a-z0-9_.-]+)\/structure\/(.+)\.json$/
+const STRUCTURE = /(?:^|\/)structure\/(.+)\.json$/
 
 /**
  * 文件路径 → 资源位置；不是这几类 worldgen 文件时返回 null。
@@ -44,6 +47,10 @@ export function resourceFromPath(path: string): ResourceLocation | null {
   if (m) return { kind: m[2] as WorldgenKind, id: `${m[1]}:${m[3]}` }
   m = WITHOUT_NAMESPACE.exec(p)
   if (m) return { kind: m[1] as WorldgenKind, id: `minecraft:${m[2]}` }
+  m = STRUCTURE_NS.exec(p)
+  if (m) return { kind: 'structure', id: `${m[1]}:${m[2]}` }
+  m = STRUCTURE.exec(p)
+  if (m) return { kind: 'structure', id: `minecraft:${m[1]}` }
   return null
 }
 
@@ -63,6 +70,9 @@ export class Registry {
   readonly placedFeature = new Map<string, unknown>()
   /** 洞穴雕刻器（v5.1） */
   readonly configuredCarver = new Map<string, unknown>()
+  /** v5.2：结构处理器列表、结构模板（化石） */
+  readonly processorList = new Map<string, unknown>()
+  readonly structure = new Map<string, unknown>()
   /** "kind|id" → 来自哪个数据包。后加载的覆盖先加载的，与原版数据包的优先级规则一致 */
   private readonly source = new Map<string, string>()
 
@@ -107,6 +117,12 @@ export class Registry {
         break
       case 'configured_carver':
         this.configuredCarver.set(id, json)
+        break
+      case 'processor_list':
+        this.processorList.set(id, json)
+        break
+      case 'structure':
+        this.structure.set(id, json)
         break
     }
   }

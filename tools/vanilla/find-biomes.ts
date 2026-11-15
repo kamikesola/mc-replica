@@ -1,7 +1,8 @@
 import { Worldgen } from '../../src/terrain/worldgen/Worldgen'
 import { vanillaPack, builtinPack } from '../../tests/loadDatapack'
 const wg = new Worldgen([builtinPack(), vanillaPack()!]); wg.setSeed(42n)
-const bs = wg.biomes('minecraft:overworld')
+// DIM=minecraft:nether 可以找下界的群系（v5.2）
+const bs = wg.biomes(process.env.DIM ?? 'minecraft:overworld')
 const want = process.argv.slice(2)
 const found: Record<string, [number, number]> = {}
 const used = new Set<string>()

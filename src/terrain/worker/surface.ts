@@ -74,6 +74,8 @@ export function protoChunk(wg: Worldgen, settingsId: string, s: NoiseSettingsInf
   const fluidUpdates: number[] = []
   // 矿脉（v5）：密度 > 0 的格子先问矿脉（原版 NoiseChunk 的 MaterialRuleList：含水层 → 矿脉 → 默认方块）
   const vein = wg.oreVeinifier(settingsId, (fn) => noise.wrap(fn))
+  // 密度 > 0 放 noise_settings 的 default_block（主世界石头，下界下界岩，末地末地石；v5.2 起用上，之前一律是石头）
+  const solid = BLOCK_BY_NAME[s.defaultBlock] ?? BlockType.stone
   const vctx = { blockX: 0, blockY: 0, blockZ: 0 }
   noise.forEach(
     (x, y, z, density) => {
@@ -85,8 +87,8 @@ export function protoChunk(wg: Worldgen, settingsId: string, s: NoiseSettingsInf
         vctx.blockY = y
         vctx.blockZ = z
         const v = vein(vctx)
-        b = v === null ? BlockType.stone : BLOCK_BY_NAME[v]
-      } else b = BlockType.stone
+        b = v === null ? solid : BLOCK_BY_NAME[v]
+      } else b = solid
       const i = bidx(x - wx0, y, z - wz0)
       blocks[i] = b
       if (f !== null && f !== Fluid.air && aquifer.shouldScheduleFluidUpdate) fluidUpdates.push(i)

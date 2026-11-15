@@ -61,7 +61,9 @@ export enum BlockType {
   snow, moss_carpet, pale_moss_carpet,
   vine, cocoa, pale_hanging_moss, mangrove_propagule,
   // v5.1（顺序和下面 BLOCKS.push 一致）
-  short_grass, fern, tall_grass, large_fern, dead_bush, dandelion, poppy, blue_orchid, allium, azure_bluet, red_tulip, orange_tulip, white_tulip, pink_tulip, oxeye_daisy, cornflower, lily_of_the_valley, closed_eyeblossom, open_eyeblossom, sunflower, lilac, rose_bush, peony, brown_mushroom, red_mushroom, sweet_berry_bush, sugar_cane, bamboo, azalea, flowering_azalea, pink_petals, lily_pad, pumpkin, melon, cactus, seagrass, tall_seagrass, kelp, kelp_plant, sea_pickle, glow_lichen, hanging_roots, spore_blossom, cave_vines, cave_vines_plant, small_dripleaf, big_dripleaf, big_dripleaf_stem, moss_block, pale_moss_block, dripstone_block, pointed_dripstone, smooth_basalt, amethyst_block, budding_amethyst, small_amethyst_bud, medium_amethyst_bud, large_amethyst_bud, amethyst_cluster, sculk, sculk_vein, sculk_sensor, sculk_shrieker, sculk_catalyst, blue_ice, mossy_cobblestone, magma_block, spawner, chest, bone_block, suspicious_sand, suspicious_gravel, sandstone_slab, tube_coral_block, tube_coral, tube_coral_fan, tube_coral_wall_fan, brain_coral_block, brain_coral, brain_coral_fan, brain_coral_wall_fan, bubble_coral_block, bubble_coral, bubble_coral_fan, bubble_coral_wall_fan, fire_coral_block, fire_coral, fire_coral_fan, fire_coral_wall_fan, horn_coral_block, horn_coral, horn_coral_fan, horn_coral_wall_fan
+  short_grass, fern, tall_grass, large_fern, dead_bush, dandelion, poppy, blue_orchid, allium, azure_bluet, red_tulip, orange_tulip, white_tulip, pink_tulip, oxeye_daisy, cornflower, lily_of_the_valley, closed_eyeblossom, open_eyeblossom, sunflower, lilac, rose_bush, peony, brown_mushroom, red_mushroom, sweet_berry_bush, sugar_cane, bamboo, azalea, flowering_azalea, pink_petals, lily_pad, pumpkin, melon, cactus, seagrass, tall_seagrass, kelp, kelp_plant, sea_pickle, glow_lichen, hanging_roots, spore_blossom, cave_vines, cave_vines_plant, small_dripleaf, big_dripleaf, big_dripleaf_stem, moss_block, pale_moss_block, dripstone_block, pointed_dripstone, smooth_basalt, amethyst_block, budding_amethyst, small_amethyst_bud, medium_amethyst_bud, large_amethyst_bud, amethyst_cluster, sculk, sculk_vein, sculk_sensor, sculk_shrieker, sculk_catalyst, blue_ice, mossy_cobblestone, magma_block, spawner, chest, bone_block, suspicious_sand, suspicious_gravel, sandstone_slab, tube_coral_block, tube_coral, tube_coral_fan, tube_coral_wall_fan, brain_coral_block, brain_coral, brain_coral_fan, brain_coral_wall_fan, bubble_coral_block, bubble_coral, bubble_coral_fan, bubble_coral_wall_fan, fire_coral_block, fire_coral, fire_coral_fan, fire_coral_wall_fan, horn_coral_block, horn_coral, horn_coral_fan, horn_coral_wall_fan,
+  // v5.2（顺序和下面 BLOCKS.push 一致）
+  netherrack, soul_sand, soul_soil, basalt, blackstone, nether_gold_ore, nether_quartz_ore, ancient_debris, crimson_nylium, warped_nylium, crimson_stem, warped_stem, nether_wart_block, warped_wart_block, shroomlight, crimson_fungus, warped_fungus, crimson_roots, warped_roots, nether_sprouts, weeping_vines, weeping_vines_plant, twisting_vines, twisting_vines_plant, fire, soul_fire, end_stone, chorus_plant, chorus_flower, end_gateway, iron_bars, bubble_column
 }
 
 // ---------------------------------------------------------------- 流体状态
@@ -128,7 +130,7 @@ export interface BlockInfo {
    * 不是 cube 的方块都不实心，也不挡住相邻方块的面。
    */
   /** multiface（v5.1）：发光地衣、幽匿脉络、藤蔓——贴在旁边实心方块的面上；旁边没有实心方块时画成十字 */
-  shape: 'cube' | 'slab' | 'cross' | 'multiface'
+  shape: 'cube' | 'slab' | 'cross' | 'multiface' | 'none'
   /** slab 的高度（1/16 格） */
   height: number
 }
@@ -346,6 +348,41 @@ BLOCKS.push(
   cross('鹿角珊瑚扇', 'horn_coral_fan'),
   cross('鹿角珊瑚壁扇', 'horn_coral_wall_fan')
 )
+// v5.2：下界、末地、气泡柱
+BLOCKS.push(
+  block('下界岩', 'netherrack'),
+  block('灵魂沙', 'soul_sand'),
+  block('灵魂土', 'soul_soil'),
+  block('玄武岩', 'basalt_top', 'basalt'),
+  block('黑石', 'blackstone'),
+  block('下界金矿石', 'nether_gold_ore'),
+  block('下界石英矿石', 'nether_quartz_ore'),
+  block('远古残骸', 'ancient_debris_top', 'ancient_debris'),
+  block('绯红菌岩', 'crimson_nylium_top', 'crimson_nylium'),
+  block('诡异菌岩', 'warped_nylium_top', 'warped_nylium'),
+  block('绯红菌柄', 'crimson_stem_top', 'crimson_stem'),
+  block('诡异菌柄', 'warped_stem_top', 'warped_stem'),
+  block('下界疣块', 'nether_wart_block'),
+  block('诡异疣块', 'warped_wart_block'),
+  block('菌光体', 'shroomlight'),
+  cross('绯红菌', 'crimson_fungus'),
+  cross('诡异菌', 'warped_fungus'),
+  cross('绯红菌索', 'crimson_roots'),
+  cross('诡异菌索', 'warped_roots'),
+  cross('下界苗', 'nether_sprouts'),
+  cross('垂泪藤', 'weeping_vines'),
+  cross('垂泪藤（茎）', 'weeping_vines_plant'),
+  cross('缠怨藤', 'twisting_vines'),
+  cross('缠怨藤（茎）', 'twisting_vines_plant'),
+  cross('火', 'fire'),
+  cross('灵魂火', 'soul_fire'),
+  block('末地石', 'end_stone'),
+  block('紫颂植物', 'chorus_plant'),
+  block('紫颂花', 'chorus_flower'),
+  block('末地折跃门', 'end_gateway'),
+  cross('铁栏杆', 'iron_bars'),
+  block('气泡柱', 'bubble_column', 'bubble_column', 'bubble_column', { solid: false, shape: 'none', breakable: false })
+)
 
 /**
  * 原版方块名 → 方块 ID（地表规则、含水层给出的是原版名字）。
@@ -444,7 +481,7 @@ export const isSolid = (b: number) => SOLID[b] === 1
 for (const b of [BlockType.vine, BlockType.glow_lichen, BlockType.sculk_vein]) BLOCKS[b].shape = 'multiface'
 export const SHAPE: Uint8Array = Uint8Array.from({ length: 256 }, (_, b) => {
   const s = BLOCKS[b]?.shape
-  return s === 'slab' ? 1 : s === 'cross' ? 2 : s === 'multiface' ? 3 : 0
+  return s === 'slab' ? 1 : s === 'cross' ? 2 : s === 'multiface' ? 3 : s === 'none' ? 4 : 0
 })
 /** slab 的高度（1/16 格） */
 export const SHAPE_HEIGHT: Uint8Array = Uint8Array.from({ length: 256 }, (_, b) => BLOCKS[b]?.height ?? 16)

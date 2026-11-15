@@ -18,6 +18,8 @@ datapacks/
       configured_feature/...  ← v5：地物（矿石、树……）
       placed_feature/...      ← v5：地物的放置规则
       configured_carver/...   ← v5.1：雕刻器（洞穴、峡谷）
+      processor_list/...      ← v5.2：结构处理器（化石）
+    structure/...             ← v5.2：结构模板（化石），用 tools/vanilla/structures-to-json.ts 从 jar 的 .nbt 转成 JSON
 ```
 
 ```text
@@ -32,7 +34,7 @@ datapacks/
 3. 重启 `npm run dev`。菜单上会显示当前用的 noise_settings，
    菜单的“世界设置”里会出现 `minecraft:overworld` 等 7 个原版 noise_settings。
 
-只读取 `noise`、`density_function`、`noise_settings`、`biome`（v4 起）、`configured_feature`、`placed_feature`（v5 起）和 `configured_carver`（v5.1 起）七个子目录，其他目录（structure、template_pool……）会被忽略，
+只读取 `noise`、`density_function`、`noise_settings`、`biome`（v4 起）、`configured_feature`、`placed_feature`（v5 起）、`configured_carver`（v5.1 起）、`processor_list`（v5.2 起）八个子目录，以及 worldgen 外面的 `structure`（v5.2 起，转换过的 JSON），其他目录（structure、template_pool……）会被忽略，
 也不会被打包进页面。
 
 ## 核对生物群系（可选）

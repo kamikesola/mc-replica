@@ -50,3 +50,14 @@ export function treesOnlyPack(vanilla: PackInput): PackInput {
 export const TREE_BLOCKS = /_log$|_leaves$|vine|bee_nest|cocoa|mushroom_block|mushroom_stem|propagule|mangrove_roots|moss_carpet|hanging_moss|creaking/
 /** 矿石 */
 export const ORE_BLOCKS = /_ore$/
+
+/** 只留列出的地物（placed_feature 名，不带 minecraft:），保留雕刻器（v5.2，和 make-world.py 的 only: 模式一样） */
+export function onlyPack(vanilla: PackInput, ids: string[]): PackInput {
+  const keep = new Set(ids.map((i) => `minecraft:${i}`))
+  const files: Record<string, unknown> = {}
+  for (const [p, b] of biomes(vanilla)) {
+    const name = p.split('/').pop()!
+    files[`/only/worldgen/biome/${name}`] = { ...b, features: (b.features as string[][]).map((l) => l.filter((x) => keep.has(x))) }
+  }
+  return { name: 'only', files }
+}

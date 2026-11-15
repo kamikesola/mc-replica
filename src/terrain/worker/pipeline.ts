@@ -67,6 +67,8 @@ export class ChunkSource {
 
   /** 调试用：装饰直接写进原型（共享一个世界、按调用顺序生效），tools 里做“生成顺序”的实验时打开 */
   shared = false
+  /** 调试用（v5.2）：每个区块只放自己的地物，看不到邻居放的，withDecorations 也只叠自己的 */
+  isolated = false
   private readonly protos = new Lru<Proto>(160)
   private readonly decorations = new Lru<Decoration>(400)
   private readonly features: FeatureRegistry | null
@@ -143,7 +145,7 @@ export class ChunkSource {
     // 就像原版按顺序生成区块时，后生成的区块能看到先生成的邻居放下的树
     const rx = Math.floor(cx / REGION)
     const rz = Math.floor(cz / REGION)
-    for (let ez = Math.max(rz * REGION, cz - 2); ez <= cz; ez++)
+    for (let ez = Math.max(rz * REGION, cz - 2); ez <= (this.isolated ? cz - 99 : cz); ez++)
       for (let ex = Math.max(rx * REGION, cx - 2); ex <= Math.min(rx * REGION + REGION - 1, cx + 2); ex++) {
         if (ez === cz && ex >= cx) break
         const e = this.decoration(ex, ez)
@@ -174,6 +176,7 @@ export class ChunkSource {
       minY,
       height: H,
       seed: this.wg.seed,
+      hasSkyLight: !/nether|end/.test(this.settingsId),
       seaLevel: s.seaLevel,
       getBlock: (x, y, z) => {
         const i = slot(x, z)
@@ -262,11 +265,27 @@ export class ChunkSource {
         const sx = cx + dx
         const sz = cz + dz
         if (Math.abs(sx - ox) > 1 || Math.abs(sz - oz) > 1) continue
+        if (this.isolated && (dx !== 0 || dz !== 0)) continue
         const d = this.decoration(sx, sz)
         // 这个装饰里，(cx, cz) 在它的 3×3 的哪一格
         const part = d[(cz - sz + 1) * 3 + (cx - sx + 1)]
         for (let j = 0; j < part.idx.length; j++) out[part.idx[j]] = part.ids[j]
       }
+    bubbleColumns(out)
     return out
   }
+}
+
+/**
+ * 气泡柱（v5.2）：原版岩浆块、灵魂沙放下时安排一次方块刻，刻到的时候把上面连着的水源都变成气泡柱。
+ * 生成的区块加载后马上就会刻到，所以这里直接在装饰完的区块上做（只看同一列，不跨区块）。
+ */
+function bubbleColumns(blocks: Uint8Array): void {
+  const H = blocks.length >> 8
+  for (let i = 0; i < 256; i++)
+    for (let y = 0; y < H - 1; y++) {
+      const b = blocks[y * 256 + i]
+      if (b !== BlockType.magma_block && b !== BlockType.soul_sand) continue
+      for (let k = y + 1; k < H && (blocks[k * 256 + i] === BlockType.water || blocks[k * 256 + i] === BlockType.bubble_column); k++) blocks[k * 256 + i] = BlockType.bubble_column
+    }
 }

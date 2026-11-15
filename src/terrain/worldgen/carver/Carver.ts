@@ -45,6 +45,8 @@ interface Common {
   yScale: (r: RandomSource) => number
   lavaLevel: unknown
   replaceable: string
+  /** 下界洞穴（v5.2，NetherWorldCarver）：不管含水层，y ≤ 底部 + 31 是岩浆，其余是空气 */
+  nether?: boolean
 }
 
 /** 一个配置好的雕刻器：判断起点 + 在目标区块里挖 */
@@ -69,7 +71,8 @@ export function configuredCarver(json: unknown): ConfiguredCarver | null {
   }
   if (type === 'cave') return caveCarver(common, c)
   if (type === 'canyon') return canyonCarver(common, c)
-  return null // nether_cave 等（主世界用不到）
+  if (type === 'nether_cave') return caveCarver({ ...common, nether: true }, c)
+  return null
 }
 
 // ---------------------------------------------------------------- 公共：挖椭球（原版 WorldCarver.carveEllipsoid / carveBlock）
@@ -105,6 +108,12 @@ function carveEllipsoid(t: CarveTarget, cm: Common, x: number, y: number, z: num
         mask[mi] = 1
         // carveBlock
         const cur = t.get(s, v, u)
+        if (cm.nether) {
+          if (!inTag(cur, cm.replaceable)) continue
+          t.set(s, v, u, v <= t.minY + 31 ? 'minecraft:lava' : 'minecraft:air')
+          carved = true
+          continue
+        }
         if (cur === 'minecraft:grass_block' || cur === 'minecraft:mycelium') reachedSurface = true
         if (!inTag(cur, cm.replaceable)) continue
         let state: string
@@ -151,9 +160,12 @@ function caveCarver(cm: Common, c: Record<string, unknown>): ConfiguredCarver {
   const vMul = floatProvider(c.vertical_radius_multiplier)
   const floor = floatProvider(c.floor_level)
   const RANGE = 4
-  const CAVE_BOUND = 15
+  // 下界洞穴（NetherWorldCarver）：起点少一些（getCaveBound 10）、更粗、更扁（getYScale 5）
+  const CAVE_BOUND = cm.nether ? 10 : 15
+  const Y_SCALE = cm.nether ? 5.0 : 1.0
 
   const thicknessOf = (r: Rand) => {
+    if (cm.nether) return f32(f32(f32(r.nextFloat() * 2.0) + r.nextFloat()) * 2.0)
     let f = f32(f32(r.nextFloat() * 2.0) + r.nextFloat())
     if (r.nextInt(10) === 0) f = f32(f * f32(f32(f32(r.nextFloat() * r.nextFloat()) * 3.0) + 1.0))
     return f
@@ -217,7 +229,7 @@ function caveCarver(cm: Common, c: Record<string, unknown>): ConfiguredCarver {
           const o = f32(f32(r.nextFloat() - 0.5) / 4.0)
           const thick = thicknessOf(r)
           const s = i - r.nextInt(Math.trunc(i / 4))
-          tunnel(t, r.nextLong(), d, e, f, g, h, thick, q, o, 0, s, 1.0, mask, skip)
+          tunnel(t, r.nextLong(), d, e, f, g, h, thick, q, o, 0, s, Y_SCALE, mask, skip)
         }
       }
     }

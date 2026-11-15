@@ -10,7 +10,7 @@ overworld_carver_replaceables snow_layer_cannot_survive_on snow_layer_can_surviv
 sculk_replaceable sculk_replaceable_world_gen dripstone_replaceable_blocks coral_blocks corals wall_corals coral_plants
 lava_pool_stone_cannot_replace small_dripleaf_placeable big_dripleaf_placeable bamboo_plantable_on dead_bush_may_place_on
 mushroom_grow_block replaceable_by_mushrooms terracotta supports_vegetation mineable/pickaxe frogs_spawnable_on
-sand stone_bricks wool wool_carpets'''.split()
+sand stone_bricks wool wool_carpets nether_carver_replaceables nylium wart_blocks soul_fire_base_blocks infiniburn_overworld fire'''.split()
 cache = {}
 def expand(tag):
     if tag in cache: return cache[tag]

@@ -1,7 +1,7 @@
 /**
  * 按区域比较（v5.1）：areas 文件每行“群系名 区块x 区块z”，比较以它为中心的 4×4 个区块。
  *
- *   tsx tools/vanilla/diff-areas.ts <原版存档> <areas 文件>... [--top N] [--only 名字]
+ *   tsx tools/vanilla/diff-areas.ts <原版存档> <areas 文件>... [--top N] [--only 区域名] [--features 地物,地物]
  *
  * 每个区域输出一致比例和差别最多的几组；最后输出全部区域合起来的差别。
  */
@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs'
 import { Worldgen } from '../../src/terrain/worldgen/Worldgen'
 import { vanillaPack } from '../../tests/loadDatapack'
 import { diffChunks } from './diff'
+import { onlyPack } from '../../tests/featurePacks'
 
 const args = process.argv.slice(2)
 const flag = (name: string) => {
@@ -20,8 +21,11 @@ const flag = (name: string) => {
 }
 const top = Number(flag('--top') ?? 6)
 const only = flag('--only')
+/** --features a,b：只放这几个地物（和 make-world.py 的 only: 模式对应） */
+const onlyFeatures = flag('--features')
 const [world, ...files] = args
-const wg = new Worldgen([vanillaPack()!])
+const vanilla = vanillaPack()!
+const wg = new Worldgen(onlyFeatures ? [vanilla, onlyPack(vanilla, onlyFeatures.split(','))] : [vanilla])
 wg.setSeed(42n)
 const all = new Map<string, number>()
 const blocks = new Map<string, [number, number, number]>()
@@ -33,7 +37,9 @@ for (const f of files)
     if (!name || (only && !only.split(',').includes(name))) continue
     const chunks: [number, number][] = []
     for (let x = Number(a) - 2; x < Number(a) + 2; x++) for (let z = Number(b) - 2; z < Number(b) + 2; z++) chunks.push([x, z])
-    const r = diffChunks(world, wg, chunks)
+    // 名字前面可以带维度：nether:xxx、end:xxx（v5.2）
+    const dim = name.startsWith('nether:') ? 'minecraft:nether' : name.startsWith('end:') ? 'minecraft:end' : 'minecraft:overworld'
+    const r = diffChunks(world, wg, chunks, { dim, features: process.env.FEATURES !== '0' })
     same += r.same
     total += r.total
     for (const [k, n] of r.pairs) all.set(k, (all.get(k) ?? 0) + n)

@@ -152,44 +152,51 @@ export class ParameterList<T> {
     return { min, max, children, items: null }
   }
 
+  /** 上一次的结果：先拿它的距离当上界，剪枝快很多（原版 RTree 也这样做，结果和逐项比较一样） */
+  private last = 0
+  private readonly target = new Float64Array(DIMS)
+
+  private dist(i: number): number {
+    const t = this.target
+    const lo = this.lo
+    const hi = this.hi
+    let s = 0
+    for (let d = 0, o = i * DIMS; d < DIMS; d++, o++) {
+      const v = t[d]
+      const e = v < lo[o] ? lo[o] - v : v > hi[o] ? v - hi[o] : 0
+      s += e * e
+    }
+    return s
+  }
+
   find(t: TargetPoint): T {
-    const target = [t[0], t[1], t[2], t[3], t[4], t[5], 0]
-    let best = Infinity
-    let bestIdx = 0
-    const lower = (min: Float64Array, max: Float64Array) => {
-      let s = 0
+    const target = this.target
+    for (let d = 0; d < 6; d++) target[d] = t[d]
+    target[6] = 0
+    let bestIdx = this.last
+    let best = this.dist(bestIdx)
+    const stack: BoxNode[] = [this.root]
+    while (stack.length) {
+      const node = stack.pop()!
+      // 盒子到目标的距离下界
+      let lb = 0
       for (let d = 0; d < DIMS; d++) {
         const v = target[d]
-        const e = v < min[d] ? min[d] - v : v > max[d] ? v - max[d] : 0
-        s += e * e
+        const e = v < node.min[d] ? node.min[d] - v : v > node.max[d] ? v - node.max[d] : 0
+        lb += e * e
       }
-      return s
-    }
-    const visit = (node: BoxNode) => {
+      if (lb > best) continue
       if (node.items) {
         for (const i of node.items) {
-          let s = 0
-          for (let d = 0; d < DIMS; d++) {
-            const v = target[d]
-            const lo = this.lo[i * DIMS + d]
-            const hi = this.hi[i * DIMS + d]
-            const e = v < lo ? lo - v : v > hi ? v - hi : 0
-            s += e * e
-          }
-          if (s < best || (s === best && i < bestIdx)) {
-            best = s
+          const s2 = this.dist(i)
+          if (s2 < best || (s2 === best && i < bestIdx)) {
+            best = s2
             bestIdx = i
           }
         }
-        return
-      }
-      const kids = node.children!.map((c) => ({ c, lb: lower(c.min, c.max) })).sort((a, b) => a.lb - b.lb)
-      for (const { c, lb } of kids) {
-        if (lb > best) break
-        visit(c)
-      }
+      } else for (let k = node.children!.length - 1; k >= 0; k--) stack.push(node.children![k])
     }
-    visit(this.root)
+    this.last = bestIdx
     return this.values[bestIdx][1]
   }
 

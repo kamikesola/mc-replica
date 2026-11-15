@@ -16,6 +16,13 @@ import { loadChunk } from './anvil'
 export function diffChunks(world: string, wg: Worldgen, chunks: [number, number][], opts: { features?: boolean } = {}) {
   const s = wg.getSettings('minecraft:overworld')
   const pairs = new Map<string, number>()
+  /** 每种方块：[原版有几格, 我们有几格, 两边都是它的格数] */
+  const perBlock = new Map<string, [number, number, number]>()
+  const pb = (n: string) => {
+    let e = perBlock.get(n)
+    if (!e) perBlock.set(n, (e = [0, 0, 0]))
+    return e
+  }
   let same = 0
   let total = 0
   let compared = 0
@@ -34,12 +41,15 @@ export function diffChunks(world: string, wg: Worldgen, chunks: [number, number]
         if (b === 'minecraft:cave_air') b = 'minecraft:air'
         if (a === 'minecraft:cave_air') a = 'minecraft:air'
         total++
+        pb(b)[0]++
+        pb(a)[1]++
+        if (a === b) pb(a)[2]++
         if (a === b) same++
         else pairs.set(`${a.replace('minecraft:', '')} → ${b.replace('minecraft:', '')}`, (pairs.get(`${a.replace('minecraft:', '')} → ${b.replace('minecraft:', '')}`) ?? 0) + 1)
       }
     })
   }
-  return { compared, total, same, pairs: [...pairs].sort((x, y) => y[1] - x[1]) }
+  return { compared, total, same, pairs: [...pairs].sort((x, y) => y[1] - x[1]), perBlock }
 }
 
 if (process.argv[1]?.endsWith('diff.ts')) {

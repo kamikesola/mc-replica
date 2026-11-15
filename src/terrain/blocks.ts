@@ -1,3 +1,4 @@
+import { ALWAYS_WATERLOGGED } from './worldgen/feature/core'
 import { TEXTURE_LAYER, type TextureName } from './textures/painters'
 
 /**
@@ -58,7 +59,9 @@ export enum BlockType {
   mushroom_stem, red_mushroom_block, brown_mushroom_block,
   mangrove_roots, muddy_mangrove_roots, rooted_dirt, bee_nest, creaking_heart,
   snow, moss_carpet, pale_moss_carpet,
-  vine, cocoa, pale_hanging_moss, mangrove_propagule
+  vine, cocoa, pale_hanging_moss, mangrove_propagule,
+  // v5.1（顺序和下面 BLOCKS.push 一致）
+  short_grass, fern, tall_grass, large_fern, dead_bush, dandelion, poppy, blue_orchid, allium, azure_bluet, red_tulip, orange_tulip, white_tulip, pink_tulip, oxeye_daisy, cornflower, lily_of_the_valley, closed_eyeblossom, open_eyeblossom, sunflower, lilac, rose_bush, peony, brown_mushroom, red_mushroom, sweet_berry_bush, sugar_cane, bamboo, azalea, flowering_azalea, pink_petals, lily_pad, pumpkin, melon, cactus, seagrass, tall_seagrass, kelp, kelp_plant, sea_pickle, glow_lichen, hanging_roots, spore_blossom, cave_vines, cave_vines_plant, small_dripleaf, big_dripleaf, big_dripleaf_stem, moss_block, pale_moss_block, dripstone_block, pointed_dripstone, smooth_basalt, amethyst_block, budding_amethyst, small_amethyst_bud, medium_amethyst_bud, large_amethyst_bud, amethyst_cluster, sculk, sculk_vein, sculk_sensor, sculk_shrieker, sculk_catalyst, blue_ice, mossy_cobblestone, magma_block, spawner, chest, bone_block, suspicious_sand, suspicious_gravel, sandstone_slab, tube_coral_block, tube_coral, tube_coral_fan, tube_coral_wall_fan, brain_coral_block, brain_coral, brain_coral_fan, brain_coral_wall_fan, bubble_coral_block, bubble_coral, bubble_coral_fan, bubble_coral_wall_fan, fire_coral_block, fire_coral, fire_coral_fan, fire_coral_wall_fan, horn_coral_block, horn_coral, horn_coral_fan, horn_coral_wall_fan
 }
 
 // ---------------------------------------------------------------- 流体状态
@@ -102,6 +105,10 @@ for (const kind of [FluidKind.water, FluidKind.lava] as const) {
 }
 
 /** 每个方块 ID 的流体种类（0 = 不是流体），网格生成时查 */
+/** 含水的方块（v5.1）：海草、海带、珊瑚……原版里它们和水源在同一格，这里当成“水源 + 一个十字形的面” */
+export const WATERLOGGED: BlockType[] = [...ALWAYS_WATERLOGGED].map((n) => BlockType[n.slice(10) as keyof typeof BlockType])
+for (const b of WATERLOGGED) FLUIDS[b] = { kind: FluidKind.water, amount: 8, source: true, falling: false }
+
 export const FLUID_KIND: Uint8Array = Uint8Array.from(FLUIDS, (f) => f.kind)
 
 export const isFluid = (b: number) => FLUID_KIND[b] !== FluidKind.none
@@ -120,7 +127,8 @@ export interface BlockInfo {
    * 形状（v5）：cube 完整方块；slab 只有底下 height/16 高（雪层、地毯）；cross 两片交叉的面（藤蔓、垂根等植物，镂空纹理）。
    * 不是 cube 的方块都不实心，也不挡住相邻方块的面。
    */
-  shape: 'cube' | 'slab' | 'cross'
+  /** multiface（v5.1）：发光地衣、幽匿脉络、藤蔓——贴在旁边实心方块的面上；旁边没有实心方块时画成十字 */
+  shape: 'cube' | 'slab' | 'cross' | 'multiface'
   /** slab 的高度（1/16 格） */
   height: number
 }
@@ -242,6 +250,102 @@ BLOCKS.push(
   cross('苍白垂须', 'pale_hanging_moss'),
   cross('红树胎生苗', 'mangrove_propagule')
 )
+// v5.1
+BLOCKS.push(
+  cross('矮草丛', 'short_grass'),
+  cross('蕨', 'fern'),
+  cross('高草丛', 'tall_grass'),
+  cross('大型蕨', 'large_fern'),
+  cross('枯萎的灌木', 'dead_bush'),
+  cross('蒲公英', 'dandelion'),
+  cross('虞美人', 'poppy'),
+  cross('兰花', 'blue_orchid'),
+  cross('绒球葱', 'allium'),
+  cross('蓝花美耳草', 'azure_bluet'),
+  cross('红色郁金香', 'red_tulip'),
+  cross('橙色郁金香', 'orange_tulip'),
+  cross('白色郁金香', 'white_tulip'),
+  cross('粉红色郁金香', 'pink_tulip'),
+  cross('滨菊', 'oxeye_daisy'),
+  cross('矢车菊', 'cornflower'),
+  cross('铃兰', 'lily_of_the_valley'),
+  cross('闭合的眼眸花', 'closed_eyeblossom'),
+  cross('张开的眼眸花', 'open_eyeblossom'),
+  cross('向日葵', 'sunflower'),
+  cross('丁香', 'lilac'),
+  cross('玫瑰丛', 'rose_bush'),
+  cross('牡丹', 'peony'),
+  cross('棕色蘑菇', 'brown_mushroom'),
+  cross('红色蘑菇', 'red_mushroom'),
+  cross('甜浆果丛', 'sweet_berry_bush'),
+  cross('甘蔗', 'sugar_cane'),
+  cross('竹子', 'bamboo'),
+  cross('杜鹃花丛', 'azalea'),
+  cross('盛开的杜鹃花丛', 'flowering_azalea'),
+  slab('粉红色花簇', 'pink_petals', 1),
+  slab('睡莲', 'lily_pad', 1),
+  block('南瓜', 'pumpkin_top', 'pumpkin'),
+  block('西瓜', 'melon_top', 'melon'),
+  block('仙人掌', 'cactus_top', 'cactus'),
+  cross('海草', 'seagrass'),
+  cross('高海草', 'tall_seagrass'),
+  cross('海带', 'kelp'),
+  cross('海带茎', 'kelp_plant'),
+  cross('海泡菜', 'sea_pickle'),
+  cross('发光地衣', 'glow_lichen'),
+  cross('垂根', 'hanging_roots'),
+  cross('孢子花', 'spore_blossom'),
+  cross('洞穴藤蔓', 'cave_vines'),
+  cross('洞穴藤蔓（茎）', 'cave_vines_plant'),
+  cross('小型垂滴叶', 'small_dripleaf'),
+  cross('大型垂滴叶', 'big_dripleaf'),
+  cross('大型垂滴叶茎', 'big_dripleaf_stem'),
+  block('苔藓块', 'moss_block'),
+  block('苍白苔藓块', 'pale_moss_block'),
+  block('滴水石块', 'dripstone_block'),
+  cross('滴水石锥', 'pointed_dripstone'),
+  block('平滑玄武岩', 'smooth_basalt'),
+  block('紫水晶块', 'amethyst_block'),
+  block('紫水晶母岩', 'budding_amethyst'),
+  cross('小型紫晶芽', 'small_amethyst_bud'),
+  cross('中型紫晶芽', 'medium_amethyst_bud'),
+  cross('大型紫晶芽', 'large_amethyst_bud'),
+  cross('紫水晶簇', 'amethyst_cluster'),
+  block('幽匿块', 'sculk'),
+  cross('幽匿脉络', 'sculk_vein'),
+  slab('幽匿感测体', 'sculk_sensor', 8),
+  slab('幽匿尖啸体', 'sculk_shrieker', 8),
+  block('幽匿催发体', 'sculk_catalyst'),
+  block('蓝冰', 'blue_ice'),
+  block('苔石', 'mossy_cobblestone'),
+  block('岩浆块', 'magma_block'),
+  block('刷怪笼', 'spawner'),
+  block('箱子', 'chest'),
+  block('骨块', 'bone_block_top', 'bone_block'),
+  block('可疑的沙子', 'suspicious_sand'),
+  block('可疑的沙砾', 'suspicious_gravel'),
+  slab('砂岩台阶', 'sandstone_slab', 8),
+  block('管珊瑚块', 'tube_coral_block'),
+  cross('管珊瑚', 'tube_coral'),
+  cross('管珊瑚扇', 'tube_coral_fan'),
+  cross('管珊瑚壁扇', 'tube_coral_wall_fan'),
+  block('脑纹珊瑚块', 'brain_coral_block'),
+  cross('脑纹珊瑚', 'brain_coral'),
+  cross('脑纹珊瑚扇', 'brain_coral_fan'),
+  cross('脑纹珊瑚壁扇', 'brain_coral_wall_fan'),
+  block('气泡珊瑚块', 'bubble_coral_block'),
+  cross('气泡珊瑚', 'bubble_coral'),
+  cross('气泡珊瑚扇', 'bubble_coral_fan'),
+  cross('气泡珊瑚壁扇', 'bubble_coral_wall_fan'),
+  block('火珊瑚块', 'fire_coral_block'),
+  cross('火珊瑚', 'fire_coral'),
+  cross('火珊瑚扇', 'fire_coral_fan'),
+  cross('火珊瑚壁扇', 'fire_coral_wall_fan'),
+  block('鹿角珊瑚块', 'horn_coral_block'),
+  cross('鹿角珊瑚', 'horn_coral'),
+  cross('鹿角珊瑚扇', 'horn_coral_fan'),
+  cross('鹿角珊瑚壁扇', 'horn_coral_wall_fan')
+)
 
 /**
  * 原版方块名 → 方块 ID（地表规则、含水层给出的是原版名字）。
@@ -279,6 +383,11 @@ export const BLOCK_BY_NAME: Record<string, BlockType> = {
   'minecraft:red_terracotta': BlockType.red_terracotta,
   'minecraft:light_gray_terracotta': BlockType.light_gray_terracotta,
   'minecraft:oak_log': BlockType.log,
+  'minecraft:cobblestone': BlockType.cobblestone,
+  'minecraft:oak_planks': BlockType.planks,
+  'minecraft:glowstone': BlockType.glowstone,
+  'minecraft:cave_air': BlockType.air,
+  'minecraft:void_air': BlockType.air,
   'minecraft:oak_leaves': BlockType.leaves
 }
 // v5：名字和枚举名一致的方块
@@ -289,7 +398,7 @@ for (const k of Object.keys(BlockType)) {
 
 /** 方块 ID → 原版方块名（地表规则读方块时用） */
 export const NAME_BY_BLOCK: string[] = []
-for (const [name, b] of Object.entries(BLOCK_BY_NAME)) NAME_BY_BLOCK[b] = name
+for (const [name, b] of Object.entries(BLOCK_BY_NAME)) NAME_BY_BLOCK[b] ??= name // 别名（cave_air 等）不覆盖第一个名字
 for (let b = 16; b <= 23; b++) NAME_BY_BLOCK[b] = 'minecraft:water'
 for (let b = 24; b <= 31; b++) NAME_BY_BLOCK[b] = 'minecraft:lava'
 
@@ -332,6 +441,10 @@ export const SOLID: Uint8Array = Uint8Array.from({ length: 256 }, (_, b) => (BLO
 export const isSolid = (b: number) => SOLID[b] === 1
 
 /** 形状（v5）：0 完整方块，1 slab（雪层、地毯），2 十字（藤蔓等） */
-export const SHAPE: Uint8Array = Uint8Array.from({ length: 256 }, (_, b) => (BLOCKS[b]?.shape === 'slab' ? 1 : BLOCKS[b]?.shape === 'cross' ? 2 : 0))
+for (const b of [BlockType.vine, BlockType.glow_lichen, BlockType.sculk_vein]) BLOCKS[b].shape = 'multiface'
+export const SHAPE: Uint8Array = Uint8Array.from({ length: 256 }, (_, b) => {
+  const s = BLOCKS[b]?.shape
+  return s === 'slab' ? 1 : s === 'cross' ? 2 : s === 'multiface' ? 3 : 0
+})
 /** slab 的高度（1/16 格） */
 export const SHAPE_HEIGHT: Uint8Array = Uint8Array.from({ length: 256 }, (_, b) => BLOCKS[b]?.height ?? 16)

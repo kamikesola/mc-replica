@@ -15,6 +15,7 @@ import { javaHashOrder } from '../src/terrain/worldgen/feature/tree'
 import { WorldgenRandom } from '../src/terrain/worldgen/random/WorldgenRandom'
 import { Worldgen, type PackInput } from '../src/terrain/worldgen/Worldgen'
 import { oresOnlyPack, treesOnlyPack } from './featurePacks'
+import { CATEGORIES } from './featureCategories'
 import { repoPath, vanillaPack } from './loadDatapack'
 
 const vanilla = vanillaPack()
@@ -135,4 +136,29 @@ test('原版数据：完整的装饰会放下矿石、树和积雪', { skip, tim
     for (const id of src.withDecorations(cx, cz)) count.set(NAME_BY_BLOCK[id], (count.get(NAME_BY_BLOCK[id]) ?? 0) + 1)
   }
   for (const b of ['coal_ore', 'iron_ore', 'dark_oak_log', 'dark_oak_leaves', 'spruce_log', 'snow']) assert.ok((count.get('minecraft:' + b) ?? 0) > 0, b)
+})
+
+// ---------------------------------------------------------------- v5.1：其余地物和原版完整存档对照
+
+const fixture51 = JSON.parse(readFileSync(repoPath('tests/fixtures/features51.json'), 'utf8')) as Record<string, Record<string, Record<string, number[]>>>
+
+test('v5.1 地物和原版完整存档逐格一致（晶洞、地牢、冰山、发光地衣、花、海草、滴水石……）', { skip, timeout: 1_800_000 }, () => {
+  const wg = new Worldgen([vanilla!])
+  wg.setSeed(42n)
+  const src = chunkSource(wg, 'minecraft:overworld', wg.getSettings('minecraft:overworld'))
+  let blocks = 0
+  for (const [cat, chunks] of Object.entries(fixture51)) {
+    const re = CATEGORIES[cat]
+    for (const [key, byName] of Object.entries(chunks)) {
+      const [cx, cz] = key.split(',').map(Number)
+      const got: Record<string, number[]> = {}
+      src.withDecorations(cx, cz).forEach((id, i) => {
+        const n = NAME_BY_BLOCK[id]
+        if (re.test(n)) (got[n] ??= []).push(i)
+      })
+      assert.deepEqual(got, byName, `${cat} 区块 ${key}`)
+      blocks += Object.values(byName).reduce((s, l) => s + l.length, 0)
+    }
+  }
+  assert.ok(Object.keys(fixture51).length >= 10 && blocks > 1500, `${Object.keys(fixture51).length} 类，${blocks} 格`)
 })

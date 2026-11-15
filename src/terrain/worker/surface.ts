@@ -2,6 +2,8 @@ import { BLOCK_BITS, BLOCK_BY_NAME, BlockType, NAME_BY_BLOCK } from '../blocks'
 import PalettedContainer, { type PalettedData } from '../chunk/PalettedContainer'
 import { meshSection, N, nIndex, type MeshOptions, type SectionMesh } from '../mesh/mesher'
 import { ChunkSource } from './pipeline'
+import type { CarveTarget } from '../worldgen/carver/Carver'
+import type { SurfaceInput } from '../worldgen/surface/SurfaceSystem'
 import { type Aquifer, Fluid, foliageColor, grassColor, NoiseChunk, type NoiseSettingsInfo, type Worldgen } from '../worldgen'
 
 /**
@@ -103,7 +105,7 @@ export function protoChunk(wg: Worldgen, settingsId: string, s: NoiseSettingsInf
       heights[lz * 16 + lx] = y
     }
   if (surface) {
-    surface.buildSurface({
+    const surfaceInput: SurfaceInput = {
       chunkX: cx,
       chunkZ: cz,
       minY,
@@ -122,7 +124,40 @@ export function protoChunk(wg: Worldgen, settingsId: string, s: NoiseSettingsInf
       coldEnoughToSnow: (b, x, y, z) => biomes.coldEnoughToSnow(b, x, y, z),
       warmerThan01: (b, x, y, z) => biomes.temperature(b, x, y, z) > Math.fround(0.1),
       preliminarySurfaceLevel: wg.preliminarySurface(settingsId)
-    })
+    }
+    surface.buildSurface(surfaceInput)
+
+    // ---- 3. 洞穴雕刻器（v5.1）
+    const carvers = wg.carversAt(settingsId)
+    if (carvers) {
+      const fluidNames = ['minecraft:air', 'minecraft:water', 'minecraft:lava']
+      const target: CarveTarget = {
+        cx,
+        cz,
+        minY,
+        height: H,
+        get: (x, y, z) => NAME_BY_BLOCK[blocks[bidx(x - wx0, y, z - wz0)]],
+        set: (x, y, z, name) => {
+          const lx = x - wx0
+          const lz = z - wz0
+          blocks[bidx(lx, y, lz)] = BLOCK_BY_NAME[name] ?? BlockType.stone
+          // 高度图跟着更新（原版 ProtoChunk 在这个阶段更新 WG 高度图）
+          const c = lz * 16 + lx
+          if (name === 'minecraft:air' && y === heights[c]) {
+            let yy = y - 1
+            while (yy >= minY && blocks[bidx(lx, yy, lz)] === BlockType.air) yy--
+            heights[c] = yy
+          } else if (name !== 'minecraft:air' && y > heights[c]) heights[c] = y
+        },
+        substance: (x, y, z) => {
+          const f = aquifer.computeSubstance(x, y, z, 0)
+          return f === null ? null : { block: fluidNames[f], scheduleFluidUpdate: aquifer.shouldScheduleFluidUpdate }
+        },
+        markFluid: (x, y, z) => fluidUpdates.push(bidx(x - wx0, y, z - wz0)),
+        topMaterial: (x, y, z, fluid) => surface.topMaterial(surfaceInput, x, y, z, fluid)
+      }
+      carvers(target)
+    }
   } else {
     temporarySurface(blocks, wx0, wz0, minY, H, sea)
   }
@@ -177,7 +212,25 @@ export function generateChunk(wg: Worldgen, settingsId: string, s: NoiseSettings
         for (let lz = lz0; lz <= lz1; lz++)
           for (let lx = lx0; lx <= lx1; lx++) padded[(y * W + (lz + dz * 16 + PAD)) * W + lx + dx * 16 + PAD] = blocks[(y * 16 + lz) * 16 + lx]
     }
-  const fluidUpdates = src.proto(cx, cz).fluidUpdates
+  // 要更新的流体：含水层边上的（原型里记下的），加上地物放的泉、湖边上挨着空气的水 / 岩浆（原版放泉时 scheduleTick）
+  const fluidUpdates: number[] = [...src.proto(cx, cz).fluidUpdates]
+  if (features) {
+    const seen = new Set(fluidUpdates)
+    for (let y = minY + 1; y < minY + H; y++)
+      for (let lz = 0; lz < 16; lz++)
+        for (let lx = 0; lx < 16; lx++) {
+          const b = padded[pidx(lx + PAD, y, lz + PAD)]
+          if (b !== BlockType.water && b !== BlockType.lava) continue
+          const open =
+            padded[pidx(lx + PAD - 1, y, lz + PAD)] === BlockType.air ||
+            padded[pidx(lx + PAD + 1, y, lz + PAD)] === BlockType.air ||
+            padded[pidx(lx + PAD, y, lz + PAD - 1)] === BlockType.air ||
+            padded[pidx(lx + PAD, y, lz + PAD + 1)] === BlockType.air ||
+            padded[pidx(lx + PAD, y - 1, lz + PAD)] === BlockType.air
+          const i = ((y - minY) * 16 + lz) * 16 + lx
+          if (open && !seen.has(i)) fluidUpdates.push(i)
+        }
+  }
   const biomes = wg.biomes(settingsId)
   const wx0 = cx * 16 - PAD
   const wz0 = cz * 16 - PAD

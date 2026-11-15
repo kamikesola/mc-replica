@@ -101,12 +101,10 @@ export class SurfaceSystem {
   }
 
   buildSurface(input: SurfaceInput): void {
-    const { minY, height } = input
+    const { minY } = input
     const x0 = input.chunkX * 16
     const z0 = input.chunkZ * 16
-    // “预估地表”按 16×16 的格子取四个角，双线性插值（原版 Context.getMinSurfaceLevel）
-    let cellKey = ''
-    const cell = [0, 0, 0, 0]
+    const cellCache = { key: '', cell: [0, 0, 0, 0] }
 
     for (let lx = 0; lx < 16; lx++) {
       for (let lz = 0; lz < 16; lz++) {
@@ -118,46 +116,7 @@ export class SurfaceSystem {
         if (columnBiome === 'minecraft:eroded_badlands') this.erodedBadlandsExtension(col, x, z, top, minY)
         const start = input.heightAt(lx, lz) + 1
 
-        // ---- 这一列的上下文（按需计算的值都缓存在这一列里）
-        const surfaceDepth = this.surfaceDepth(x, z)
-        let secondary: number | undefined
-        let minSurface: number | undefined
-        let steep: boolean | undefined
-        const ctx: SurfaceContext = {
-          blockX: x,
-          blockY: 0,
-          blockZ: z,
-          surfaceDepth,
-          stoneDepthAbove: 0,
-          stoneDepthBelow: 0,
-          waterHeight: NO_WATER,
-          minY,
-          maxY: minY + height - 1,
-          biome: () => '',
-          surfaceSecondary: () => (secondary ??= this.secondary.getValue(x, 0, z)),
-          minSurfaceLevel: () => {
-            if (minSurface === undefined) {
-              const ci = x >> 4
-              const cj = z >> 4
-              const key = `${ci},${cj}`
-              if (key !== cellKey) {
-                cellKey = key
-                cell[0] = input.preliminarySurfaceLevel(ci << 4, cj << 4)
-                cell[1] = input.preliminarySurfaceLevel((ci + 1) << 4, cj << 4)
-                cell[2] = input.preliminarySurfaceLevel(ci << 4, (cj + 1) << 4)
-                cell[3] = input.preliminarySurfaceLevel((ci + 1) << 4, (cj + 1) << 4)
-              }
-              const fx = Math.fround((x & 15) / 16)
-              const fz = Math.fround((z & 15) / 16)
-              const a = cell[0] + fx * (cell[1] - cell[0])
-              const b = cell[2] + fx * (cell[3] - cell[2])
-              minSurface = Math.floor(a + fz * (b - a)) + surfaceDepth - 8
-            }
-            return minSurface
-          },
-          steep: () => (steep ??= this.steep(input, lx, lz)),
-          coldEnoughToSnow: () => input.coldEnoughToSnow(ctx.biome(), x, ctx.blockY, z)
-        }
+        const ctx = this.columnContext(input, lx, lz, cellCache)
 
         // ---- 从上往下走
         let stoneAbove = 0
@@ -202,6 +161,69 @@ export class SurfaceSystem {
         }
       }
     }
+  }
+
+  /** 一列的上下文（按需计算的值都缓存在这一列里） */
+  private columnContext(input: SurfaceInput, lx: number, lz: number, cache: { key: string; cell: number[] }): SurfaceContext {
+    const x = input.chunkX * 16 + lx
+    const z = input.chunkZ * 16 + lz
+    const surfaceDepth = this.surfaceDepth(x, z)
+    let secondary: number | undefined
+    let minSurface: number | undefined
+    let steep: boolean | undefined
+    const ctx: SurfaceContext = {
+      blockX: x,
+      blockY: 0,
+      blockZ: z,
+      surfaceDepth,
+      stoneDepthAbove: 0,
+      stoneDepthBelow: 0,
+      waterHeight: NO_WATER,
+      minY: input.minY,
+      maxY: input.minY + input.height - 1,
+      biome: () => '',
+      surfaceSecondary: () => (secondary ??= this.secondary.getValue(x, 0, z)),
+      // “预估地表”按 16×16 的格子取四个角，双线性插值（原版 Context.getMinSurfaceLevel）
+      minSurfaceLevel: () => {
+        if (minSurface === undefined) {
+          const ci = x >> 4
+          const cj = z >> 4
+          const key = `${ci},${cj}`
+          const cell = cache.cell
+          if (key !== cache.key) {
+            cache.key = key
+            cell[0] = input.preliminarySurfaceLevel(ci << 4, cj << 4)
+            cell[1] = input.preliminarySurfaceLevel((ci + 1) << 4, cj << 4)
+            cell[2] = input.preliminarySurfaceLevel(ci << 4, (cj + 1) << 4)
+            cell[3] = input.preliminarySurfaceLevel((ci + 1) << 4, (cj + 1) << 4)
+          }
+          const fx = Math.fround((x & 15) / 16)
+          const fz = Math.fround((z & 15) / 16)
+          const a = cell[0] + fx * (cell[1] - cell[0])
+          const b = cell[2] + fx * (cell[3] - cell[2])
+          minSurface = Math.floor(a + fz * (b - a)) + surfaceDepth - 8
+        }
+        return minSurface
+      },
+      steep: () => (steep ??= this.steep(input, lx, lz)),
+      coldEnoughToSnow: () => input.coldEnoughToSnow(ctx.biome(), x, ctx.blockY, z)
+    }
+    return ctx
+  }
+
+  /**
+   * 原版 SurfaceSystem.topMaterial（v5.1，洞穴雕刻器用）：雕刻器挖开地表以后，下面露出来的土要换成什么。
+   * 把这一格当成“地面第一格”（石头深度 1）问地表规则，有水时水面在它上面一格。
+   */
+  topMaterial(input: SurfaceInput, x: number, y: number, z: number, hasFluid: boolean): string | null {
+    const ctx = this.columnContext(input, x & 15, z & 15, { key: '', cell: [0, 0, 0, 0] })
+    ctx.blockY = y
+    ctx.stoneDepthAbove = 1
+    ctx.stoneDepthBelow = 1
+    ctx.waterHeight = hasFluid ? y + 1 : NO_WATER
+    let biome: string | undefined
+    ctx.biome = () => (biome ??= input.biome(x, y, z))
+    return this.rule(ctx)
   }
 
   /** 陡坡：区块内相邻两列高度差 ≥ 4（原版 Steep 条件，只看区块内） */

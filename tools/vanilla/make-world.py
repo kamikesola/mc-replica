@@ -5,6 +5,8 @@
 
 模式：
   bare     去掉所有地物和雕刻器（只剩地形 + 地表 + 矿脉）
+  carvers  去掉所有地物，保留雕刻器（v5.1）
+  full     原版的地物和雕刻器都保留（只是关掉结构）
   nocarve  去掉雕刻器（我们还没做），地物保留
   ores     只留第 6 步（矿石），去掉雕刻器
   trees    只有一个 test_trees 地物：每个区块从所有树里随机挑一种（和 tests/featurePacks.ts 完全一样）
@@ -29,8 +31,8 @@ if mode == 'trees':
         {'type': 'minecraft:heightmap', 'heightmap': 'OCEAN_FLOOR'}, {'type': 'minecraft:biome'}]}
 for f in glob.glob(W + '/biome/*.json'):
     d = json.load(open(f))
-    d['carvers'] = []
-    if mode == 'bare': d['features'] = []
+    if mode != 'carvers' and mode != 'full': d['carvers'] = []
+    if mode in ('bare', 'carvers'): d['features'] = []
     if mode == 'ores': d['features'] = [l if i == 6 else [] for i, l in enumerate(d['features'])]
     if mode == 'trees': d['features'] = [[] for _ in range(9)] + [['minecraft:test_trees']]
     files['worldgen/biome/' + os.path.basename(f)] = d

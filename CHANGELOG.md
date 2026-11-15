@@ -2,6 +2,40 @@
 
 每个版本对应一个 git tag 和一篇文章。数字来自 `tools/` 下的脚本或 `tests/` 里的测试，可以自己复现。
 
+## v5.1 · 其余地物与洞穴
+
+文章：[docs/articles/v5.1-其余地物与洞穴.md](docs/articles/v5.1-其余地物与洞穴.md) · 日志：[docs/notes/v5.1-notes.md](docs/notes/v5.1-notes.md)
+
+**新增**
+
+- 雕刻器（`worldgen/carver/`）：洞穴、峡谷；`configured_carver` 数据包目录
+- 地物（`worldgen/feature/`）：
+  - 植物（`vegetation.ts`）：random_patch / flower / no_bonemeal_flower、simple_block、block_column、seagrass、kelp、sea_pickle、bamboo、vines、
+    multiface_growth、vegetation_patch、waterlogged_vegetation_patch、root_system
+  - 地形（`terrain.ts`）：lake、spring_feature、ice_spike、iceberg、blue_ice、forest_rock、desert_well、monster_room、underwater_magma、geode、
+    pointed_dripstone、dripstone_cluster、large_dripstone
+  - 幽匿（`sculk.ts`）：sculk_patch（SculkSpreader 世界生成版）
+  - 珊瑚（`coral.ts`）：coral_tree、coral_claw、coral_mushroom
+  - 方块提供者：noise_provider、noise_threshold_provider、dual_noise_provider；FloatProvider：clamped_normal
+- 93 种新方块（共 202 种）；海草、海带、珊瑚、海泡菜当成水源（含水）
+- 网格：藤蔓、发光地衣、幽匿脉络按“贴着的实心面”画（multiface）
+- 泉和湖边上挨着空气的水 / 岩浆，区块加载后流一次
+- 方块标签由 `tools/vanilla/gen-tags.py` 从原版 jar 展开生成（`feature/blockTags.json`）
+- 原版对照：`make-world.py` 新增 `carvers` / `full` 模式；`diff-areas.ts`（按区域、按方块统计一致率）、`probe.ts`、`find-biomes.ts`、
+  `make-full-fixture.ts`；样本区域新增 19 个（`areas51.txt`）
+- `tests/feature.test.ts`：按 11 类方块（晶洞、地牢、冰、发光地衣、花……）和原版完整存档逐格对照
+
+**改动**
+
+- 群系查找更快（结果不变）：参数表查找用上一次的结果剪枝；气候的 5 个平面参数按列缓存；BiomeManager 的角点抖动缓存
+- `has_sturdy_face`、海草等的“撑得住”判断不再把树叶算进去（原版树叶的支撑形状是空的）
+
+**已知问题**
+
+- 跨区块的大地物（树、滴水石簇、幽匿）在装饰区域边界两侧互相看不到，和原版的生成顺序有关
+- 没有方块状态：两格高植物上下一样、滴水石锥一种形状、没有气泡柱、苍白苔藓地毯不往上长
+- 化石没做；生成地物时没有光照，蘑菇按“都亮”处理
+
 ## v5 · 地物：矿石、树和积雪
 
 文章：[docs/articles/v5-地物：矿石与树.md](docs/articles/v5-地物：矿石与树.md) · 日志：[docs/notes/v5-notes.md](docs/notes/v5-notes.md)

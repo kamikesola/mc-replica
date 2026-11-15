@@ -23,10 +23,12 @@ import {
 import type { PositionalRandomFactory } from './random/RandomSource'
 import { type BiomeData, coldEnoughToSnow, defaultBiome, parseBiome, temperatureAt } from './biome/Biome'
 import { BiomeManager, obfuscateSeed } from './biome/BiomeManager'
-import { ParameterList, sampleClimate, type ClimateSampler } from './biome/Climate'
+import { ParameterList, quantize, sampleClimate, type ClimateSampler, type TargetPoint } from './biome/Climate'
 import { netherBiomeParameters, overworldBiomeParameters } from './biome/OverworldBiomeBuilder'
 import { SurfaceSystem } from './surface/SurfaceSystem'
 import { createOreVeinifier, type Veinifier } from './ore/OreVeinifier'
+import { configuredCarver, setLargeFeatureSeed, type CarveTarget, type ConfiguredCarver } from './carver/Carver'
+import { FastLegacyRandom } from './random/FastLegacyRandom'
 
 /**
  * 世界生成的“总入口”。把四个步骤串起来，外部只需要和这一个类打交道：
@@ -179,6 +181,52 @@ export class Worldgen {
   }
 
   /**
+   * 洞穴雕刻器（v5.1，见 carver/Carver.ts）：返回“在某个区块里挖洞”的函数。
+   * 起点区块的群系取 (区块最小角, y = 0) 的噪声群系；群系 JSON 没有 carvers 或者不是主世界类的设置时返回 null。
+   */
+  carversAt(settingsId: string): ((t: CarveTarget) => void) | null {
+    const id = normalizeId(settingsId)
+    if (!OVERWORLD_LIKE.includes(id.replace('minecraft:', ''))) return null
+    const biomes = this.biomes(id)
+    const reg = this.registry
+    if (!biomes.possible.some((b) => (reg.biome.get(b) as { carvers?: unknown } | undefined)?.carvers)) return null
+    const built = new Map<string, ConfiguredCarver | null>()
+    const carverOf = (cid: string) => {
+      if (!built.has(cid)) {
+        const json = reg.configuredCarver.get(cid)
+        built.set(cid, json ? configuredCarver(json) : null)
+      }
+      return built.get(cid)!
+    }
+    const listOf = new Map<string, string[]>()
+    const carversOfBiome = (b: string) => {
+      let l = listOf.get(b)
+      if (!l) {
+        const c = (reg.biome.get(b) as { carvers?: string | string[] } | undefined)?.carvers ?? []
+        listOf.set(b, (l = (typeof c === 'string' ? [c] : c).map(normalizeId)))
+      }
+      return l
+    }
+    const seed = this.seed
+    const r = new FastLegacyRandom(0n)
+    return (t) => {
+      const mask = new Uint8Array(16 * 16 * t.height)
+      for (let j = -8; j <= 8; j++)
+        for (let k = -8; k <= 8; k++) {
+          const sx = t.cx + j
+          const sz = t.cz + k
+          const biome = biomes.noiseBiome(sx * 4, 0, sz * 4)
+          const list = carversOfBiome(biome)
+          for (let l = 0; l < list.length; l++) {
+            const c = carverOf(list[l])
+            setLargeFeatureSeed(r, seed + BigInt(l), sx, sz)
+            if (c && c.isStartChunk(r)) c.carve(t, r, sx, sz, mask)
+          }
+        }
+    }
+  }
+
+  /**
    * 矿脉（v5，见 ore/OreVeinifier.ts）。wrap 把 vein_toggle 等包装成和 final_density 同一个 NoiseChunk 里的插值版本。
    * noise_settings 没开矿脉时返回 null。原版：oreRandom = random.fromHashOf("minecraft:ore").forkPositional()
    */
@@ -322,6 +370,12 @@ export class BiomeSource {
   private readonly single: string
   private readonly climate: ClimateSampler | null
   private readonly cache = new Map<number, string>()
+  /**
+   * 气候里和 y 无关的 5 个值（温度、湿度、大陆性、侵蚀、奇异度）按列缓存（v5.1）：
+   * 原版这几个都是 y_scale = 0 的 shifted_noise / flat_cache，只有 depth 随 y 变。数据包改了就不缓存。
+   */
+  private readonly flat: boolean
+  private readonly columns = new Map<number, number[]>()
   private readonly minQY: number
   private readonly maxQY: number
 
@@ -343,6 +397,21 @@ export class BiomeSource {
       this.list && fields.every((f) => r[f])
         ? (Object.fromEntries(fields.map((f) => [f, wg.sampler({ kind: 'router', settings: settingsId, field: f })])) as unknown as ClimateSampler)
         : null
+    const reg = wg.registry.densityFunction
+    // router 里是解析过的函数（reference / constant / shifted_noise …），引用的是注册表里的原始 JSON，两种都认
+    const is2D = (j: unknown, depth = 0): boolean => {
+      if (depth > 8) return false
+      if (typeof j === 'number') return true
+      if (typeof j === 'string') return reg.has(j) && is2D(reg.get(j), depth + 1)
+      const o = j as Record<string, unknown>
+      const t = String(o.type).replace('minecraft:', '')
+      if (t === 'reference') return is2D(o.id, depth + 1)
+      if (t === 'constant' || t === 'flat_cache' || t === 'cache_2d' || t === 'flatCache' || t === 'cache2d') return true
+      if (t === 'shifted_noise')
+        return (o.y_scale ?? o.yScale) === 0 && is2D(o.shift_x ?? o.shiftX, depth + 1) && is2D(o.shift_y ?? o.shiftY, depth + 1) && is2D(o.shift_z ?? o.shiftZ, depth + 1)
+      return false
+    }
+    this.flat = (['temperature', 'vegetation', 'continents', 'erosion', 'ridges'] as const).every((f) => is2D(r[f]))
     // 原版 ChunkAccess.getNoiseBiome 把 y 限制在世界高度以内
     this.minQY = s.minY >> 2
     this.maxQY = this.minQY + (s.height >> 2) - 1
@@ -356,10 +425,24 @@ export class BiomeSource {
     let b = this.cache.get(key)
     if (b === undefined) {
       if (this.cache.size > 400_000) this.cache.clear()
-      b = this.list.find(sampleClimate(this.climate, qx, qy, qz))
+      b = this.list.find(this.flat ? this.sampleFlat(qx, qy, qz) : sampleClimate(this.climate, qx, qy, qz))
       this.cache.set(key, b)
     }
     return b
+  }
+
+  /** sampleClimate 的快速版：5 个平面的值按列缓存，只算 depth */
+  private sampleFlat(qx: number, qy: number, qz: number): TargetPoint {
+    const c = this.climate!
+    const key = (qx + 0x100000) * 0x200000 + (qz + 0x100000)
+    let col = this.columns.get(key)
+    if (!col) {
+      if (this.columns.size > 100_000) this.columns.clear()
+      const t = sampleClimate(c, qx, 0, qz)
+      col = [t[0], t[1], t[2], t[3], t[5]]
+      this.columns.set(key, col)
+    }
+    return [col[0], col[1], col[2], col[3], quantize(c.depth({ blockX: qx * 4, blockY: qy * 4, blockZ: qz * 4 })), col[4]]
   }
 
   getBiome(x: number, y: number, z: number): string {

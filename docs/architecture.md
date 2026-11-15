@@ -1,4 +1,4 @@
-# 架构说明（v5）
+# 架构说明（v5.1）
 
 ## 整体：和原项目一样，一个模块一个类
 
@@ -36,7 +36,8 @@ terrain.init(seed, settings)                          // 让 Worker 换种子
    │    > 0 石头（或矿脉，v5）；≤ 0 交给含水层：空气 / 水 / 岩浆 / 石头墙（v3）
    │ 2. 地表（v4）：原版 surface_rule（SurfaceSystem）按生物群系换成草 / 土 / 沙 / 陶瓦 / 雪……
    │    没有 surface_rule 的 noise_settings（demo）仍用 v0~v3 的临时规则
-   │ 2.3 地物（v5）：周围 3×3 个区块放的矿石、树、积雪叠上来（见文末“区块的生成流程”）
+   │ 2.2 雕刻器（v5.1）：洞穴、峡谷，周围 ±8 个区块起头的都算
+   │ 2.3 地物（v5 / v5.1）：周围 3×3 个区块放的地物叠上来（见文末“区块的生成流程”）
    │ 2.5 每一列草 / 树叶 / 水的颜色：周围 5×5 列的生物群系颜色取平均，随区块一起传回主线程
    │ 3. 每 16 层切一个 section：
    │    PalettedContainer.fromValues()    ← terrain/chunk（调色板 + 位压缩）
@@ -119,7 +120,8 @@ Chunk（16×16×384）
 | `aquifer/` | 含水层：格子中心点、水位、压力墙、全局流体、预估地表高度 |
 | `biome/` | 生物群系（v4）：气候参数表（`Climate`、`OverworldBiomeBuilder`）、方块坐标 → 群系的抖动缩放（`BiomeManager`）、群系 JSON 里的温度 / 颜色（`Biome`） |
 | `ore/` | 矿脉（v5，噪声阶段） |
-| `feature/` | 地物（v5）：世界接口和各种提供者（`core`）、放置修饰器（`placement`）、矿石 / 圆盘 / 积雪 / 巨型蘑菇 / 选择器（`features`）、树（`tree`）、地物排序和区块装饰（`decorate`）、方块标签（`tags`） |
+| `feature/` | 地物（v5）：世界接口和各种提供者（`core`）、放置修饰器（`placement`）、矿石 / 圆盘 / 积雪 / 巨型蘑菇 / 选择器（`features`）、树（`tree`）、地物排序和区块装饰（`decorate`）、方块标签（`tags`，v5.1 起由 `blockTags.json` 生成）；v5.1：植物（`vegetation`）、湖 / 泉 / 冰 / 晶洞 / 滴水石 / 地牢（`terrain`）、幽匿（`sculk`）、珊瑚（`coral`） |
+| `carver/` | 雕刻器（v5.1）：洞穴、峡谷 |
 | `surface/` | 地表规则（v4）：规则 JSON → 函数（`SurfaceRules`）、逐列应用 + 恶地石柱 / 冰山 / 陶瓦条纹（`SurfaceSystem`） |
 | `density/` | 密度函数的各种类型、JSON 解析、样条（float）、`RandomState`、`NoiseChunk`、`PointCache` |
 | `Worldgen.ts` | 总入口 |
@@ -145,17 +147,18 @@ Chunk（16×16×384）
 | `tests/chunk.test.ts` | 位压缩、调色板、贪婪网格、纹理 |
 | `tests/fluid.test.ts` | 流体流动规则、流体表面高度、含水层（原版数据） |
 | `tests/movement.test.ts` | 移动速度、跳跃、飞行、潜行、抬步、碰撞、游泳，对照原版数值 |
-| `tests/feature.test.ts` | 地物排序、HashSet 顺序；矿脉、矿石、树和原版存档逐格对照（v5） |
+| `tests/feature.test.ts` | 地物排序、HashSet 顺序；矿脉、矿石、树和原版存档逐格对照（v5）；其余地物按类别和原版完整存档对照（v5.1） |
 | `tests/biome.test.ts` | 气候参数表、温度 / 草色、地表规则的每种条件、原版数据生成的区块（v4） |
 
 ## 区块的生成流程（v5）
 
 ```text
-proto(cx, cz)            密度 → 方块（含水层、矿脉）→ 地表规则                     protoChunk()
+proto(cx, cz)            密度 → 方块（含水层、矿脉）→ 地表规则 → 雕刻器（v5.1）    protoChunk()
 decoration(cx, cz)       复制周围 3×3 个原型 → 先叠上同一装饰区域里排在前面的区块的装饰
                          → 按原版顺序放这个区块的地物（每步、每个地物一个种子）→ 记下改了哪些格子
 withDecorations(cx, cz)  原型 + 周围 3×3 个区块的装饰（按区域、区域内先 z 后 x 的顺序叠）
 generateChunk(cx, cz)    18×18 列（中间是 withDecorations，外圈来自邻居）→ 颜色 → section + 网格
+                         + 挨着空气的水 / 岩浆记下来，加载后流一次（泉、湖，v5.1）
 ```
 
 原版对照工具在 `tools/vanilla/`：读原版存档（.mca / NBT）、逐格比较、生成测试数据，用法见那里的 README。

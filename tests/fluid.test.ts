@@ -154,8 +154,8 @@ test('含水层（原版数据）：洞穴里有水也有空气；y < -54 的空
       }
     })
   }
-  // 有了含水层，洞穴里有水（地下湖），但大部分仍是空气
-  assert.ok(count.caveAir > count.caveWater && count.caveWater > 0, JSON.stringify(count))
+  // 有了含水层，洞穴里有水（地下湖）也有空气（v5.1 起还有雕刻器挖的洞，水空比例和原版存档一致，见 tools/vanilla/diff.ts）
+  assert.ok(count.caveAir > 0 && count.caveWater > 0, JSON.stringify(count))
   assert.equal(count.deepAir, 0) // y < -54 的空处一定是岩浆（全局流体）
   assert.ok(updates > 0)
 })

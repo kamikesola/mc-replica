@@ -13,7 +13,7 @@
  * 区域里按“先 z 后 x”依次装饰，后面的看得到前面的；不同区域之间只看原型。
  * 这样结果和加载顺序无关，多个 Worker 各算各的也能拼上（同一个区域固定交给同一个 Worker，缓存才能复用）。
  */
-import { BLOCK_BY_NAME, BlockType, NAME_BY_BLOCK } from '../blocks'
+import { BLOCK_BY_NAME, BlockType, FLUID_KIND, FluidKind, NAME_BY_BLOCK } from '../blocks'
 import type { NoiseSettingsInfo, Worldgen } from '../worldgen'
 import { blocksMotion, isLeaves, type HeightmapType, type WorldGenLevel } from '../worldgen/feature/core'
 import { applyBiomeDecoration, buildFeaturesPerStep } from '../worldgen/feature/decorate'
@@ -50,7 +50,8 @@ type Decoration = { idx: Int32Array; ids: Uint8Array }[]
 const NAMES = NAME_BY_BLOCK
 /** 按方块 ID 预先算好的性质（高度图用） */
 const MOTION = Uint8Array.from(NAMES.map((n) => (blocksMotion(n) ? 1 : 0)))
-const FLUID = Uint8Array.from(NAMES.map((n) => (n === 'minecraft:water' || n === 'minecraft:lava' ? 1 : 0)))
+/** 有流体（含水的方块也算，原版 MOTION_BLOCKING 看的是 getFluidState） */
+const FLUID = Uint8Array.from(NAMES.map((_n, id) => (FLUID_KIND[id] !== FluidKind.none ? 1 : 0)))
 const LEAF = Uint8Array.from(NAMES.map((n) => (isLeaves(n) ? 1 : 0)))
 
 /**
@@ -172,6 +173,7 @@ export class ChunkSource {
     const level: WorldGenLevel = {
       minY,
       height: H,
+      seed: this.wg.seed,
       seaLevel: s.seaLevel,
       getBlock: (x, y, z) => {
         const i = slot(x, z)

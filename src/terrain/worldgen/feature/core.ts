@@ -6,7 +6,9 @@
  * 我们的方块表还没有“状态”这个概念（v7 再做）。需要属性的地方（雪层厚度等）在注释里说明了取舍。
  */
 import { inTag } from './tags'
-import { nextIntBetween } from '../math/Mth'
+import { clampedMap, nextIntBetween } from '../math/Mth'
+import { NormalNoise, type NoiseParameters } from '../noise/NormalNoise'
+import { LegacyRandomSource } from '../random/LegacyRandomSource'
 import type { RandomSource } from '../random/RandomSource'
 
 // ---------------------------------------------------------------- 世界接口
@@ -19,6 +21,8 @@ export interface WorldGenLevel {
   /** 世界高度（主世界 384），最高的方块 y = minY + height - 1 */
   readonly height: number
   readonly seaLevel: number
+  /** 世界种子（晶洞的噪声要用） */
+  readonly seed: bigint
   getBlock(x: number, y: number, z: number): string
   /** 写方块；超出可写范围（3×3 区块以外、世界上下界以外）时什么也不做，返回 false */
   setBlock(x: number, y: number, z: number, state: string): boolean
@@ -40,21 +44,50 @@ const AIR = new Set(['minecraft:air', 'minecraft:cave_air', 'minecraft:void_air'
 export const isAir = (b: string) => AIR.has(b)
 export const isWater = (b: string) => b === 'minecraft:water'
 
-/** 不是完整方块的（没有碰撞或者碰撞很小）：植物、地毯、藤蔓…… */
+/** 不是“实心”的（原版 legacySolid：碰撞箱为空，或者包围盒平均边长 < 0.73 且不满一格高）：植物、地毯、藤蔓…… */
 const NON_SOLID = new Set(
   [
     'water', 'lava', 'short_grass', 'tall_grass', 'fern', 'large_fern', 'dead_bush', 'seagrass', 'tall_seagrass', 'vine', 'glow_lichen',
     'moss_carpet', 'pale_moss_carpet', 'pale_hanging_moss', 'mangrove_propagule', 'cocoa', 'hanging_roots', 'cave_vines', 'cave_vines_plant',
     'oak_sapling', 'spruce_sapling', 'birch_sapling', 'jungle_sapling', 'acacia_sapling', 'dark_oak_sapling', 'cherry_sapling', 'pale_oak_sapling',
-    'dandelion', 'poppy', 'brown_mushroom', 'red_mushroom', 'sugar_cane', 'kelp', 'kelp_plant', 'lily_pad', 'sweet_berry_bush', 'bamboo_sapling'
+    'dandelion', 'poppy', 'blue_orchid', 'allium', 'azure_bluet', 'red_tulip', 'orange_tulip', 'white_tulip', 'pink_tulip', 'oxeye_daisy',
+    'cornflower', 'lily_of_the_valley', 'closed_eyeblossom', 'open_eyeblossom', 'sunflower', 'lilac', 'rose_bush', 'peony',
+    'brown_mushroom', 'red_mushroom', 'sugar_cane', 'kelp', 'kelp_plant', 'lily_pad', 'sweet_berry_bush', 'bamboo_sapling', 'pink_petals',
+    'sea_pickle', 'spore_blossom', 'small_dripleaf', 'big_dripleaf_stem', 'small_amethyst_bud', 'medium_amethyst_bud', 'large_amethyst_bud',
+    'amethyst_cluster', 'sculk_vein', 'fire', 'soul_fire',
+    ...['tube', 'brain', 'bubble', 'fire', 'horn'].flatMap((c) => [`${c}_coral`, `${c}_coral_fan`, `${c}_coral_wall_fan`])
   ].map((n) => `minecraft:${n}`)
 )
 
 /** 原版 BlockState.blocksMotion（旧的“实心”）：挡住移动。雪层原版标了 forceSolidOn，算实心 */
 export const blocksMotion = (b: string) => !isAir(b) && !NON_SOLID.has(b)
 
-/** 原版 isFaceFull(UP)：上表面是不是完整的（雪层能不能放在上面） */
-export const hasFullTopFace = (b: string) => blocksMotion(b) && b !== 'minecraft:snow'
+/** 实心、但不是完整的方块（上表面不满）：雪层、仙人掌、箱子、竹子、滴水石锥、台阶…… */
+const PARTIAL = new Set(
+  ['snow', 'cactus', 'chest', 'bamboo', 'pointed_dripstone', 'big_dripleaf', 'sculk_sensor', 'sculk_shrieker', 'sandstone_slab', 'azalea', 'flowering_azalea', 'dirt_path', 'farmland'].map((n) => `minecraft:${n}`)
+)
+
+/** 原版 isFaceFull(碰撞箱, UP)：上表面是不是完整的（雪层能不能放在上面）。树叶的碰撞箱是满的 */
+export const hasFullTopFace = (b: string) => (blocksMotion(b) && !PARTIAL.has(b))
+
+/**
+ * 原版 isFaceSturdy / isFaceFull(支撑形状)：这一面能不能“撑住”东西（海草、发光地衣、藤蔓……）。
+ * 树叶的支撑形状是空的，所以不算。这里不区分方向（我们没有台阶朝向、楼梯……）
+ */
+export const isSturdy = (b: string) => blocksMotion(b) && !PARTIAL.has(b) && !isLeaves(b)
+
+/** 原版 isSolidRender：不透光的完整方块（蘑菇要长在上面） */
+export const isSolidRender = (b: string) => isSturdy(b) && !inTag(b, 'minecraft:ice') && b !== 'minecraft:glass' && b !== 'minecraft:mangrove_roots'
+
+/** 一直“含水”的方块（海草、海带、珊瑚……）：原版里它们和水源在同一格 */
+export const ALWAYS_WATERLOGGED = new Set(
+  ['seagrass', 'tall_seagrass', 'kelp', 'kelp_plant', 'sea_pickle', ...['tube', 'brain', 'bubble', 'fire', 'horn'].flatMap((c) => [`${c}_coral`, `${c}_coral_fan`, `${c}_coral_wall_fan`])].map((n) => `minecraft:${n}`)
+)
+
+/** 原版 getFluidState：这一格有没有水（水方块或者含水的方块） */
+export const hasWater = (b: string) => b === 'minecraft:water' || ALWAYS_WATERLOGGED.has(b)
+/** 原版 BlockState.liquid()：是流体方块本身（不含“含水”） */
+export const isLiquid = (b: string) => b === 'minecraft:water' || b === 'minecraft:lava'
 
 export const isLeaves = (b: string) => inTag(b, 'minecraft:leaves')
 
@@ -76,6 +109,14 @@ export function parseState(json: unknown): string {
 // ---------------------------------------------------------------- 数值提供者
 
 export type IntProvider = (random: RandomSource) => number
+
+/** IntProvider 的最小、最大值（原版 getMinValue / getMaxValue），只支持常数和 uniform */
+export function intRange(json: unknown): [number, number] {
+  if (typeof json === 'number') return [json, json]
+  const o = json as Record<string, number>
+  if ('value' in o) return [o.value, o.value]
+  return [o.min_inclusive, o.max_inclusive]
+}
 
 /** 原版 IntProvider：常数，或 uniform / biased_to_bottom / clamped / clamped_normal / weighted_list */
 export function intProvider(json: unknown): IntProvider {
@@ -131,6 +172,23 @@ export function intProvider(json: unknown): IntProvider {
 export function floatProvider(json: unknown): (r: RandomSource) => number {
   if (typeof json === 'number') return () => Math.fround(json)
   const o = json as Record<string, number | string>
+  if (String(o.type).endsWith('trapezoid')) {
+    const min = Math.fround(o.min as number)
+    const max = Math.fround(o.max as number)
+    const plateau = Math.fround(o.plateau as number)
+    const f = Math.fround(max - min)
+    const g = Math.fround(Math.fround(f - plateau) / 2)
+    const h = Math.fround(f - g)
+    return (r) => Math.fround(Math.fround(min + Math.fround(r.nextFloat() * h)) + Math.fround(r.nextFloat() * g))
+  }
+  if (String(o.type).endsWith('clamped_normal')) {
+    // 原版 ClampedNormalFloat：mean + nextGaussian * deviation，夹在 [min, max]
+    const mean = Math.fround(o.mean as number)
+    const dev = Math.fround(o.deviation as number)
+    const min = Math.fround(o.min as number)
+    const max = Math.fround(o.max as number)
+    return (r) => Math.min(Math.max(Math.fround(mean + Math.fround(Math.fround(r.nextGaussian()) * dev)), min), max)
+  }
   if (String(o.type).endsWith('uniform')) {
     const min = Math.fround(o.min_inclusive as number)
     const max = Math.fround(o.max_exclusive as number)
@@ -243,8 +301,55 @@ export function stateProvider(json: unknown): StateProvider {
       const s = parseState(o.state)
       return () => s
     }
+    case 'noise_provider':
+    case 'noise_threshold_provider':
+    case 'dual_noise_provider':
+      return noiseStateProvider(o)
     default:
       throw new Error(`不支持的方块提供者：${String(o.type)}`)
+  }
+}
+
+/**
+ * 原版 NoiseBasedStateProvider 的三个子类：按一个固定种子的噪声选方块（花林、平原、草甸的花）。
+ * 噪声 = NormalNoise.create(new WorldgenRandom(new LegacyRandomSource(seed)), noise)，和世界种子无关。
+ */
+function noiseStateProvider(o: Record<string, unknown>): StateProvider {
+  const type = String(o.type).replace('minecraft:', '')
+  const noise = NormalNoise.create(new LegacyRandomSource(BigInt(o.seed as number)), o.noise as NoiseParameters)
+  const scale = Math.fround(o.scale as number)
+  const value = (x: number, y: number, z: number, sc = scale) => noise.getValue(x * sc, y * sc, z * sc)
+  const pick = (list: string[], d: number) => list[Math.trunc(Math.min(Math.max((1.0 + d) / 2.0, 0.0), 0.9999) * list.length)]
+  const states = ((o.states as unknown[]) ?? []).map(parseState)
+  switch (type) {
+    case 'noise_provider':
+      return (_r, x, y, z) => pick(states, value(x, y, z))
+    case 'noise_threshold_provider': {
+      const threshold = Math.fround(o.threshold as number)
+      const highChance = Math.fround(o.high_chance as number)
+      const def = parseState(o.default_state)
+      const low = (o.low_states as unknown[]).map(parseState)
+      const high = (o.high_states as unknown[]).map(parseState)
+      return (r, x, y, z) => {
+        const d = value(x, y, z)
+        if (d < threshold) return low[r.nextInt(low.length)]
+        return r.nextFloat() < highChance ? high[r.nextInt(high.length)] : def
+      }
+    }
+    default: {
+      // dual_noise_provider：先用“慢噪声”决定这一片有几种花（variety），再从里面按噪声挑
+      const [vMin, vMax] = o.variety as [number, number]
+      const slow = NormalNoise.create(new LegacyRandomSource(BigInt(o.seed as number)), o.slow_noise as NoiseParameters)
+      const slowScale = Math.fround(o.slow_scale as number)
+      const slowValue = (x: number, y: number, z: number) => slow.getValue(x * slowScale, y * slowScale, z * slowScale)
+      return (_r, x, y, z) => {
+        const d = slowValue(x, y, z)
+        const n = Math.trunc(clampedMap(d, -1.0, 1.0, vMin, vMax + 1))
+        const list: string[] = []
+        for (let j = 0; j < n; j++) list.push(pick(states, slowValue(x + j * 54545, y, z + j * 34234)))
+        return pick(list, value(x, y, z))
+      }
+    }
   }
 }
 
@@ -283,11 +388,78 @@ export function ruleTest(json: unknown): RuleTest {
 
 export type BlockPredicate = (level: WorldGenLevel, x: number, y: number, z: number) => boolean
 
-/** 原版 SaplingBlock / BushBlock.mayPlaceOn：树苗只能种在 dirt 标签的方块或耕地上 */
-function canSurvive(state: string, level: WorldGenLevel, x: number, y: number, z: number): boolean {
+const HORIZONTAL: [number, number][] = [[0, -1], [0, 1], [-1, 0], [1, 0]]
+const DOUBLE_PLANTS = new Set(['tall_grass', 'large_fern', 'sunflower', 'lilac', 'rose_bush', 'peony', 'small_dripleaf', 'tall_seagrass'].map((n) => `minecraft:${n}`))
+/** 两格高的植物（原版 DoublePlantBlock）：放的时候上面一格也要放 */
+export const isDoublePlant = (b: string) => DOUBLE_PLANTS.has(b)
+
+/**
+ * 生成阶段蘑菇处的亮度算不算“暗”（< 13）。原版这时光照还没算完，取到的值和区块生成的先后有关；
+ * 对照原版存档：当成“全都亮”最接近（露天的沙滩、草地上不长，见 v5.1 笔记）。
+ */
+const MUSHROOM_DARK = (_l: WorldGenLevel, _x: number, _y: number, _z: number) => false
+
+const isDirtOrFarmland = (b: string) => inTag(b, 'minecraft:dirt') || b === 'minecraft:farmland'
+
+/**
+ * 原版 BlockState.canSurvive：方块放在这里能不能“活”。只实现了地物会放的那些方块，其余都当成能活。
+ * 原版的光照判断（蘑菇要暗处）在生成阶段还没有光照，这里当成 0（见 v5.1 笔记）。
+ */
+export function canSurvive(state: string, level: WorldGenLevel, x: number, y: number, z: number): boolean {
   const below = level.getBlock(x, y - 1, z)
-  if (state.endsWith('_sapling')) return inTag(below, 'minecraft:dirt') || below === 'minecraft:farmland'
-  if (state === 'minecraft:mangrove_propagule') return inTag(below, 'minecraft:dirt') || below === 'minecraft:farmland' || below === 'minecraft:clay'
+  const n = state.slice(10) // 去掉 "minecraft:"
+  if (n.endsWith('_sapling')) return isDirtOrFarmland(below)
+  switch (n) {
+    case 'mangrove_propagule':
+      return isDirtOrFarmland(below) || below === 'minecraft:clay'
+    // BushBlock：花、草、蕨、浆果丛、粉红色花簇、两格高的植物（下半）
+    case 'short_grass': case 'fern': case 'tall_grass': case 'large_fern': case 'sunflower': case 'lilac': case 'rose_bush': case 'peony':
+    case 'dandelion': case 'poppy': case 'blue_orchid': case 'allium': case 'azure_bluet': case 'red_tulip': case 'orange_tulip': case 'white_tulip':
+    case 'pink_tulip': case 'oxeye_daisy': case 'cornflower': case 'lily_of_the_valley': case 'open_eyeblossom': case 'closed_eyeblossom':
+    case 'sweet_berry_bush': case 'pink_petals':
+      return isDirtOrFarmland(below)
+    case 'azalea': case 'flowering_azalea':
+      return inTag(below, 'minecraft:azalea_grows_on')
+    case 'dead_bush':
+      return inTag(below, 'minecraft:dead_bush_may_place_on')
+    case 'brown_mushroom': case 'red_mushroom':
+      // 原版：长在菌丝、灰化土这类方块上，或者亮度 < 13 且下面是不透光的完整方块
+      return inTag(below, 'minecraft:mushroom_grow_block') || (isSolidRender(below) && MUSHROOM_DARK(level, x, y, z))
+    case 'lily_pad':
+      return (hasWater(below) || inTag(below, 'minecraft:ice')) && !hasWater(level.getBlock(x, y, z)) && !isLiquid(level.getBlock(x, y, z))
+    case 'moss_carpet': case 'pale_moss_carpet':
+      return !isAir(below)
+    case 'small_dripleaf':
+      return inTag(below, 'minecraft:small_dripleaf_placeable') || (level.getBlock(x, y, z) === 'minecraft:water' && isDirtOrFarmland(below))
+    case 'big_dripleaf': case 'big_dripleaf_stem':
+      return below === 'minecraft:big_dripleaf_stem' || inTag(below, 'minecraft:big_dripleaf_placeable')
+    case 'spore_blossom':
+      return isSturdy(level.getBlock(x, y + 1, z)) && !hasWater(level.getBlock(x, y, z))
+    case 'seagrass': case 'tall_seagrass':
+      return isSturdy(below) && below !== 'minecraft:magma_block'
+    case 'kelp': case 'kelp_plant':
+      return below !== 'minecraft:magma_block' && (below === 'minecraft:kelp' || below === 'minecraft:kelp_plant' || isSturdy(below))
+    case 'sea_pickle':
+      return blocksMotion(below) || hasFullTopFace(below)
+    case 'bamboo':
+      return inTag(below, 'minecraft:bamboo_plantable_on')
+    case 'cactus': {
+      for (const [dx, dz] of HORIZONTAL) {
+        const b = level.getBlock(x + dx, y, z + dz)
+        if (blocksMotion(b) || b === 'minecraft:lava') return false
+      }
+      return (below === 'minecraft:cactus' || inTag(below, 'minecraft:sand')) && !isLiquid(level.getBlock(x, y + 1, z))
+    }
+    case 'sugar_cane': {
+      if (below === 'minecraft:sugar_cane') return true
+      if (!inTag(below, 'minecraft:dirt') && !inTag(below, 'minecraft:sand')) return false
+      for (const [dx, dz] of HORIZONTAL) {
+        const b = level.getBlock(x + dx, y - 1, z + dz)
+        if (hasWater(b) || b === 'minecraft:frosted_ice') return true
+      }
+      return false
+    }
+  }
   return true
 }
 
@@ -324,7 +496,7 @@ export function blockPredicate(json: unknown): BlockPredicate {
       const lava = fluids.some((f) => f.endsWith('lava'))
       return (l, x, y, z) => {
         const b = l.getBlock(x + dx, y + dy, z + dz)
-        return (water && b === 'minecraft:water') || (lava && b === 'minecraft:lava')
+        return (water && hasWater(b)) || (lava && b === 'minecraft:lava')
       }
     }
     case 'solid':
@@ -338,7 +510,7 @@ export function blockPredicate(json: unknown): BlockPredicate {
       return (l, x, y, z) => canSurvive(state, l, x + dx, y + dy, z + dz)
     }
     case 'has_sturdy_face':
-      return (l, x, y, z) => hasFullTopFace(l.getBlock(x + dx, y + dy, z + dz))
+      return (l, x, y, z) => isSturdy(l.getBlock(x + dx, y + dy, z + dz))
     default:
       throw new Error(`不支持的 BlockPredicate：${String(o.type)}`)
   }

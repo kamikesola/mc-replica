@@ -241,7 +241,9 @@ export function meshSection(blocks: Uint8Array, opts: MeshOptions = {}): { opaqu
 /**
  * 不是完整方块的方块（v5）：逐个输出，不参与贪婪合并。
  *   slab（雪层、地毯）：一个扁盒子，顶面总是画，其他面看邻居是不是实心
- *   cross（藤蔓、垂须……）：两片对角线方向的面，正反两面都画（face 6、7，着色器里按对角线算纹理坐标）
+ *   cross（垂须、花草……）：两片对角线方向的面，正反两面都画（face 6、7，着色器里按对角线算纹理坐标）
+ *   multiface（藤蔓、发光地衣、幽匿脉络，v5.1）：贴着每个实心邻居的那一面画一片（离开 1/64 格，正反两面）；
+ *     原版这些方块记着“贴在哪几面”，我们的方块没有状态，就按“哪几面挨着实心方块”画。一面都没有时画成十字
  */
 function shapedBlocks(out: Builder, blocks: Uint8Array): void {
   const S = POSITION_SCALE
@@ -265,6 +267,8 @@ function shapedBlocks(out: Builder, blocks: Uint8Array): void {
             for (let c = 0; c < 4; c++) if (corners[c * 3 + 1] > y * S) corners[c * 3 + 1] = Math.round((y + h) * S)
             out.quad(corners, face, FACE_TEXTURES[b * 6 + face], [3, 3, 3, 3], positive, false)
           }
+        } else if (shape === 3 && multiface(out, blocks, b, x, y, z)) {
+          continue
         } else {
           const layer = FACE_TEXTURES[b * 6]
           const x0 = x * S
@@ -285,6 +289,27 @@ function shapedBlocks(out: Builder, blocks: Uint8Array): void {
           }
         }
       }
+}
+
+/** 多面方块：每个实心邻居那一面画一片；一片都没画返回 false */
+function multiface(out: Builder, blocks: Uint8Array, b: number, x: number, y: number, z: number): boolean {
+  const eps = POSITION_SCALE / 64
+  let any = false
+  for (let face = 0; face < 6; face++) {
+    const n = FACE_DIRS[face]
+    if (!SOLID[blocks[nIndex(x + n[0], y + n[1], z + n[2])]]) continue
+    const axis = face >> 1
+    const u = (axis + 1) % 3
+    const v = (axis + 2) % 3
+    const positive = (face & 1) === 1
+    const corners = rectCorners(axis, u, v, positive, [x, y, z][axis], [x, y, z][u], [x, y, z][v], 1, 1)
+    for (let c = 0; c < 4; c++) corners[c * 3 + axis] += positive ? -eps : eps
+    const layer = FACE_TEXTURES[b * 6 + face]
+    out.quad([...corners], face, layer, [3, 3, 3, 3], true, false)
+    out.quad([...corners], face, layer, [3, 3, 3, 3], false, false)
+    any = true
+  }
+  return any
 }
 
 /** 矩形的 4 个角（x,y,z ×4，已乘 POSITION_SCALE），顺序 (u-,v-) (u+,v-) (u-,v+) (u+,v+) */

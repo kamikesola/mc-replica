@@ -80,19 +80,19 @@ function fiddle(h: number, l: number): number {
   return (d - 0.5) * 0.9
 }
 
-function fiddledDistance(sh: number, sl: number, i: number, j: number, k: number, d: number, e: number, f: number): number {
+/** 角点 (i, j, k) 的抖动 (g, h, n) 写进 out[o..o+2]（只和角点、种子有关，和方块无关，所以可以缓存） */
+function cornerFiddle(sh: number, sl: number, i: number, j: number, k: number, out: Float64Array, o: number): void {
   lcg(sh, sl, hiOf(i), i >>> 0)
   lcg(rh, rl, hiOf(j), j >>> 0)
   lcg(rh, rl, hiOf(k), k >>> 0)
   lcg(rh, rl, hiOf(i), i >>> 0)
   lcg(rh, rl, hiOf(j), j >>> 0)
   lcg(rh, rl, hiOf(k), k >>> 0)
-  const g = fiddle(rh, rl)
+  out[o] = fiddle(rh, rl)
   lcg(rh, rl, sh, sl)
-  const h = fiddle(rh, rl)
+  out[o + 1] = fiddle(rh, rl)
   lcg(rh, rl, sh, sl)
-  const n = fiddle(rh, rl)
-  return (f + n) * (f + n) + (e + h) * (e + h) + (d + g) * (d + g)
+  out[o + 2] = fiddle(rh, rl)
 }
 
 export class BiomeManager {
@@ -111,6 +111,32 @@ export class BiomeManager {
   private readonly sh: number
   private readonly sl: number
 
+  /** 角点抖动的缓存：角点 → fid 里的下标 */
+  private readonly cornerIndex = new Map<number, number>()
+  private fid = new Float64Array(3 * 4096)
+  private used = 0
+
+  private corner(i: number, j: number, k: number): number {
+    const key = ((i + 0x80000) * 0x100000 + (k + 0x80000)) * 512 + (j + 256)
+    let at = this.cornerIndex.get(key)
+    if (at === undefined) {
+      if (this.used * 3 >= this.fid.length) {
+        if (this.used >= 1 << 20) {
+          this.cornerIndex.clear()
+          this.used = 0
+        } else {
+          const bigger = new Float64Array(this.fid.length * 2)
+          bigger.set(this.fid)
+          this.fid = bigger
+        }
+      }
+      at = this.used++ * 3
+      cornerFiddle(this.sh, this.sl, i, j, k, this.fid, at)
+      this.cornerIndex.set(key, at)
+    }
+    return at
+  }
+
   getBiome(x: number, y: number, z: number): string {
     const i = x - 2
     const j = y - 2
@@ -127,7 +153,11 @@ export class BiomeManager {
       const bl = (p & 4) === 0
       const bl2 = (p & 2) === 0
       const bl3 = (p & 1) === 0
-      const v = fiddledDistance(this.sh, this.sl, bl ? l : l + 1, bl2 ? m : m + 1, bl3 ? n : n + 1, bl ? d : d - 1.0, bl2 ? e : e - 1.0, bl3 ? f : f - 1.0)
+      const at = this.corner(bl ? l : l + 1, bl2 ? m : m + 1, bl3 ? n : n + 1)
+      const dd = (bl ? d : d - 1.0) + this.fid[at]
+      const ee = (bl2 ? e : e - 1.0) + this.fid[at + 1]
+      const ff = (bl3 ? f : f - 1.0) + this.fid[at + 2]
+      const v = ff * ff + ee * ee + dd * dd
       if (g > v) {
         o = p
         g = v

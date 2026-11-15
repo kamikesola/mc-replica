@@ -9,6 +9,10 @@ import { blockPredicate, blocksMotion, canBeReplaced, hasFullTopFace, intProvide
 import { inTag } from './tags'
 import { PlacedFeature, placementModifier, type FeaturePlacer, type PlacementContext } from './placement'
 import { treeFeature } from './tree'
+import { sculkPatch } from './sculk'
+import { coral } from './coral'
+import { blueIce, iceberg, desertWell, dripstoneCluster, forestRock, geode, iceSpike, lake, largeDripstone, monsterRoom, pointedDripstone, spring, underwaterMagma } from './terrain'
+import { bamboo, blockColumn, kelp, multifaceGrowth, randomPatch, rootSystem, seaPickle, seagrass, simpleBlock, vegetationPatch, vines } from './vegetation'
 import { lerp, sin } from '../math/Mth'
 import type { RandomSource } from '../random/RandomSource'
 import type { Registry } from '../registry/Registry'
@@ -329,6 +333,69 @@ export class FeatureRegistry {
         return hugeMushroom(cfg, true)
       case 'huge_brown_mushroom':
         return hugeMushroom(cfg, false)
+      // v5.1：植物
+      case 'random_patch':
+      case 'flower':
+      case 'no_bonemeal_flower':
+        if (nestedNoop([cfg.feature])) return this.markNoop(type)
+        return randomPatch(cfg, nested)
+      case 'simple_block':
+        return simpleBlock(cfg)
+      case 'block_column':
+        return blockColumn(cfg)
+      case 'seagrass':
+        return seagrass(cfg)
+      case 'kelp':
+        return kelp()
+      case 'sea_pickle':
+        return seaPickle(cfg)
+      case 'bamboo':
+        return bamboo(cfg)
+      case 'vines':
+        return vines()
+      case 'multiface_growth':
+        return multifaceGrowth(cfg)
+      // v5.1：地形
+      case 'lake':
+        return lake(cfg)
+      case 'spring_feature':
+        return spring(cfg)
+      case 'ice_spike':
+        return iceSpike()
+      case 'iceberg':
+        return iceberg(cfg)
+      case 'blue_ice':
+        return blueIce()
+      case 'forest_rock':
+        return forestRock(cfg)
+      case 'desert_well':
+        return desertWell()
+      case 'monster_room':
+        return monsterRoom()
+      case 'underwater_magma':
+        return underwaterMagma(cfg)
+      case 'geode':
+        return geode(cfg)
+      case 'pointed_dripstone':
+        return pointedDripstone(cfg)
+      case 'dripstone_cluster':
+        return dripstoneCluster(cfg)
+      case 'large_dripstone':
+        return largeDripstone(cfg)
+      case 'coral_tree':
+        return coral('tree')
+      case 'coral_claw':
+        return coral('claw')
+      case 'coral_mushroom':
+        return coral('mushroom')
+      case 'sculk_patch':
+        return sculkPatch(cfg)
+      case 'vegetation_patch':
+        return vegetationPatch(cfg, nested, false)
+      case 'waterlogged_vegetation_patch':
+        return vegetationPatch(cfg, nested, true)
+      case 'root_system':
+        return rootSystem(cfg, nested)
       case 'random_selector': {
         if (nestedNoop([...(cfg.features as { feature: unknown }[]).map((e) => e.feature), cfg.default])) return this.markNoop(type)
         const items = (cfg.features as { chance: number; feature: unknown }[]).map((e) => ({ chance: f32(e.chance), place: nested(e.feature) }))

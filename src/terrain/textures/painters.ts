@@ -543,6 +543,207 @@ const cocoa = sprite(0xb06a2e, (set) => {
   set(7, 3, 0.6)
 })
 
+// ---------------------------------------------------------------- v5.1：植物、洞穴、地形类地物的方块
+
+/** 草叶：从底部长出来的几根竖线 */
+const grassBlades = (color: number, top = 12) => (c: Canvas, r: () => number) =>
+  sprite(color, (set, rr) => {
+    for (let x = 1; x < 15; x += 2) {
+      const h = Math.floor(top * (0.45 + rr() * 0.55))
+      let xx = x
+      for (let y = 15; y > 15 - h; y--) {
+        set(xx, y, 0.8 + (15 - y) / 40)
+        if (rr() < 0.15) xx += rr() < 0.5 ? 1 : -1
+      }
+    }
+  }, true)(c, r)
+
+const fernSprite = (color: number, top = 13) => (c: Canvas, r: () => number) =>
+  sprite(color, (set) => {
+    for (let y = 15; y > 15 - top; y--) {
+      set(7, y)
+      const w = Math.floor(((y - (15 - top)) / top) * 5)
+      if (y % 2 === 0) for (let k = 1; k <= w; k++) {
+        set(7 - k, y - (k >> 1), 0.9)
+        set(7 + k, y - (k >> 1), 0.9)
+      }
+    }
+  }, true)(c, r)
+
+const deadBush = sprite(0x8a6a3a, (set, r) => {
+  for (let i = 0; i < 5; i++) {
+    let x = 7
+    for (let y = 15; y > 4; y--) {
+      set(x, y)
+      if (r() < 0.4) x += i % 2 ? 1 : -1
+      if (x < 1 || x > 14) break
+    }
+  }
+})
+
+/** 花：绿色的茎 + 花朵；tall 表示两格高的花（向日葵等，上下两半用同一张图） */
+const flower = (color: number, tall = 0) => (c: Canvas, r: () => number) => {
+  for (let i = 3; i < c.data.length; i += 4) c.data[i] = 0
+  const stemTop = tall ? 2 : 6
+  for (let y = 15; y >= stemTop; y--) c.set(7, y, shade(hex(0x3f8a2a), 0.85 + r() * 0.3), 255)
+  c.set(6, 11, hex(0x4f9a3a), 255)
+  c.set(8, 9, hex(0x4f9a3a), 255)
+  const cy = tall ? 4 : 5
+  for (let y = cy - 2; y <= cy + 2; y++)
+    for (let x = 5; x <= 9; x++) if (Math.abs(x - 7) + Math.abs(y - cy) <= 3) c.set(x, y, shade(hex(color), 0.8 + r() * 0.35), 255)
+  c.set(7, cy, shade(hex(color), 0.6), 255)
+}
+
+const mushroomSprite = (color: number) =>
+  sprite(color, (set) => {
+    for (let y = 9; y < 15; y++) set(7, y, 0.7)
+    for (let x = 4; x <= 10; x++) for (let y = 5; y <= 8; y++) if (Math.abs(x - 7) <= 3 - Math.max(0, 6 - y)) set(x, y)
+  })
+
+const berryBush = (c: Canvas, r: () => number) => {
+  sprite(0x3f6a2a, (set, rr) => {
+    for (let i = 0; i < 70; i++) set(Math.floor(rr() * 14) + 1, Math.floor(rr() * 10) + 5)
+  })(c, r)
+  for (let i = 0; i < 5; i++) c.set(2 + Math.floor(r() * 12), 6 + Math.floor(r() * 8), hex(0xb0202a), 255)
+}
+
+const sugarCane = sprite(0xa0a0a0, (set) => {
+  for (const x of [3, 7, 11]) for (let y = 0; y < 16; y++) set(x, y, y % 5 === 0 ? 0.7 : 1)
+}, true)
+
+const bambooSprite = sprite(0x5d9a2a, (set) => {
+  for (let y = 0; y < 16; y++) {
+    set(7, y, y % 6 === 0 ? 0.6 : 1)
+    set(8, y, y % 6 === 0 ? 0.6 : 0.9)
+  }
+  for (let x = 9; x < 13; x++) set(x, 3, 1.1)
+})
+
+const bush = (color: number, flowers?: number) => (c: Canvas, r: () => number) => {
+  sprite(color, (set, rr) => {
+    for (let i = 0; i < 120; i++) set(Math.floor(rr() * 16), Math.floor(rr() * 12) + 2)
+  })(c, r)
+  if (flowers !== undefined) for (let i = 0; i < 8; i++) c.set(Math.floor(r() * 16), 2 + Math.floor(r() * 10), hex(flowers), 255)
+}
+
+const petals = (c: Canvas, r: () => number) => {
+  for (let i = 3; i < c.data.length; i += 4) c.data[i] = 0
+  for (let i = 0; i < 14; i++) {
+    const x = Math.floor(r() * 14) + 1
+    const y = Math.floor(r() * 14) + 1
+    c.set(x, y, hex(0xf2a8c8), 255)
+    c.set(x + 1, y, hex(0xe890b8), 255)
+  }
+}
+
+const lilyPad = (c: Canvas, r: () => number) => {
+  c.fill((x, y) => ((x - 7.5) ** 2 + (y - 7.5) ** 2 < 49 && !(x > 7 && Math.abs(y - 7.5) < 1) ? shade(hex(0x9a9a9a), 0.85 + r() * 0.3) : [0, 0, 0]))
+  for (let i = 0; i < c.data.length; i += 4) c.data[i + 3] = c.data[i] === 0 ? 0 : 255
+}
+
+const pumpkinSide = (c: Canvas, r: () => number) => c.fill((x) => shade(hex(0xd8892a), (x % 4 === 0 ? 0.75 : 1) * (0.92 + r() * 0.1)))
+const pumpkinTop = (c: Canvas, r: () => number) => c.fill((x, y) => (Math.abs(x - 7.5) < 1.5 && Math.abs(y - 7.5) < 1.5 ? hex(0x5a7a2a) : shade(hex(0xd08228), 0.9 + r() * 0.12)))
+const melonSide = (c: Canvas, r: () => number) => c.fill((x) => shade(hex(x % 4 < 2 ? 0x6fa12a : 0x8bb83a), 0.92 + r() * 0.1))
+const melonTop = (c: Canvas, r: () => number) => c.fill((x, y) => shade(hex(Math.max(Math.abs(x - 7.5), Math.abs(y - 7.5)) % 3 < 1.5 ? 0x6fa12a : 0x8bb83a), 0.92 + r() * 0.1))
+const cactusSide = (c: Canvas, r: () => number) => c.fill((x, y) => (x === 0 || x === 15 ? hex(0x2c5a1c) : (x + y) % 5 === 0 ? hex(0xd8d8b0) : shade(hex(0x4c8a2c), 0.88 + r() * 0.14)))
+const cactusTop = (c: Canvas, r: () => number) => c.fill((x, y) => (x === 0 || x === 15 || y === 0 || y === 15 ? hex(0x2c5a1c) : shade(hex(0x5c9a3c), 0.9 + r() * 0.12)))
+
+const kelpSprite = sprite(0x5a8a2a, (set, r) => {
+  let x = 7
+  for (let y = 0; y < 16; y++) {
+    set(x, y)
+    set(x + 1, y, 0.85)
+    if (y % 4 === 1) for (let k = 1; k < 4; k++) set(x + (y % 8 === 1 ? k + 1 : -k), y + (k >> 1), 0.9)
+    if (r() < 0.2) x += r() < 0.5 ? 1 : -1
+    x = Math.max(4, Math.min(10, x))
+  }
+})
+
+const seaPickle = sprite(0x6a8a2a, (set) => {
+  for (const x0 of [4, 9]) for (let y = 9; y < 16; y++) for (let x = x0; x < x0 + 3; x++) set(x, y, y < 11 ? 1.2 : 1)
+})
+
+const lichenColor = (color: number) =>
+  sprite(color, (set, r) => {
+    for (let i = 0; i < 60; i++) set(Math.floor(r() * 16), Math.floor(r() * 16), 0.8 + r() * 0.4)
+  })
+const lichen = lichenColor(0x7a9a7a)
+
+const hangingRoots = sprite(0xa07a5a, (set, r) => {
+  for (let x = 2; x < 14; x += 2) {
+    const len = 6 + Math.floor(r() * 9)
+    for (let y = 0; y < len; y++) set(x + (y % 4 === 3 ? 1 : 0), y)
+  }
+})
+
+const sporeBlossom = sprite(0xd864a8, (set) => {
+  for (let x = 3; x < 13; x++) for (let y = 0; y < 3; y++) set(x, y, Math.abs(x - 7.5) < 2 ? 0.7 : 1)
+  for (let x = 5; x < 11; x++) set(x, 3, 0.8)
+})
+
+const caveVines = (berries: boolean) => (c: Canvas, r: () => number) => {
+  sprite(0x4a7a2a, (set) => {
+    for (const x of [5, 10]) for (let y = 0; y < 16; y++) set(x + (y % 5 === 0 ? 1 : 0), y)
+  })(c, r)
+  if (berries) for (const [x, y] of [[4, 6], [11, 10], [6, 13]]) c.set(x, y, hex(0xf2a02a), 255)
+}
+
+const dripleaf = sprite(0x5a9a2a, (set) => {
+  for (let y = 6; y < 16; y++) set(7, y, 0.8)
+  for (let x = 1; x < 15; x++) for (let y = 2; y < 6; y++) if (Math.abs(x - 7.5) < 7 - (5 - y)) set(x, y)
+})
+const dripleafStem = sprite(0x5a9a2a, (set) => {
+  for (let y = 0; y < 16; y++) set(7, y, 0.85)
+})
+
+const dripstoneSprite = sprite(0x86685a, (set) => {
+  for (let y = 0; y < 16; y++) {
+    const w = Math.max(0, 3 - Math.floor(y / 5))
+    for (let x = 7 - w; x <= 8 + w; x++) set(x, y)
+  }
+})
+
+const crystal = (color: number) =>
+  sprite(color, (set) => {
+    for (let y = 4; y < 16; y++) {
+      set(7, y, 1.15)
+      set(8, y, 0.95)
+      if (y > 8) {
+        set(5, y, 0.9)
+        set(10, y, 1)
+      }
+    }
+  })
+
+const sculkBlock = (c: Canvas, r: () => number) => {
+  c.fill(() => shade(hex(0x0c2c3a), 0.8 + r() * 0.4))
+  blotches(c, () => hex(0x2ac8d8), 5, 1, r)
+}
+
+const mossyCobble = (c: Canvas, r: () => number) => {
+  cobblestone(c, r)
+  blotches(c, () => shade(hex(0x5a7a2c), 0.85 + r() * 0.3), 8, 3, r)
+}
+
+const magma = (c: Canvas, r: () => number) => {
+  const { edge } = voronoi(7, r)
+  c.fill((x, y) => (edge[y * TEX + x] < 0.9 ? hex(0xe8781a) : shade(hex(0x6a2a12), 0.8 + r() * 0.4)))
+}
+
+const spawner = (c: Canvas) => c.fill((x, y) => (x % 4 === 0 || y % 4 === 0 ? hex(0x2a3a4a) : [12, 16, 22]))
+const chestSide = (c: Canvas, r: () => number) => c.fill((x, y) => (y === 5 || x === 0 || x === 15 || y === 0 || y === 15 ? hex(0x4a3014) : (x >= 7 && x <= 8 && y >= 4 && y <= 7 ? hex(0xb8b8b8) : shade(hex(0xa8742a), 0.9 + r() * 0.12))))
+const boneSide = (c: Canvas, r: () => number) => c.fill((x) => shade(hex(0xe2dcc4), (x % 5 === 0 ? 0.85 : 1) * (0.94 + r() * 0.08)))
+const boneTop = (c: Canvas, r: () => number) => c.fill((x, y) => (Math.max(Math.abs(x - 7.5), Math.abs(y - 7.5)) < 3 ? hex(0xb8b09a) : shade(hex(0xe2dcc4), 0.94 + r() * 0.08)))
+
+const coral = (color: number) =>
+  sprite(color, (set) => {
+    for (const [x0, h] of [[4, 10], [8, 13], [11, 8]]) for (let y = 15; y > 15 - h; y--) set(x0 + (y % 4 === 0 ? 1 : 0), y)
+  })
+const coralFan = (color: number) =>
+  sprite(color, (set) => {
+    for (let y = 6; y < 16; y++) for (let x = 0; x < 16; x++) if (Math.abs(x - 7.5) < (16 - y) * 0.75 && (x + y) % 3 !== 0) set(x, y)
+  })
+
 export const PAINTERS = {
   stone,
   deepslate,
@@ -650,7 +851,105 @@ export const PAINTERS = {
   vine,
   pale_hanging_moss: hangingMoss,
   mangrove_propagule: propagule,
-  cocoa
+  cocoa,
+  // v5.1
+  short_grass: grassBlades(0x9a9a9a),
+  fern: fernSprite(0x9a9a9a),
+  tall_grass: grassBlades(0x9a9a9a, 16),
+  large_fern: fernSprite(0x9a9a9a, 16),
+  dead_bush: deadBush,
+  dandelion: flower(0xf3d93a),
+  poppy: flower(0xd8322a),
+  blue_orchid: flower(0x30a8e6),
+  allium: flower(0xb35fe0),
+  azure_bluet: flower(0xe8ecf2),
+  red_tulip: flower(0xe03a2a),
+  orange_tulip: flower(0xf08a2a),
+  white_tulip: flower(0xf2f2ee),
+  pink_tulip: flower(0xf2a8c8),
+  oxeye_daisy: flower(0xf4f4ea),
+  cornflower: flower(0x4a6ee8),
+  lily_of_the_valley: flower(0xffffff),
+  closed_eyeblossom: flower(0x8a8a8a),
+  open_eyeblossom: flower(0xf09a3a),
+  sunflower: flower(0xf6d21e, 16),
+  lilac: flower(0xd2a0dc, 16),
+  rose_bush: flower(0xd23a3a, 16),
+  peony: flower(0xf0b6d8, 16),
+  brown_mushroom: mushroomSprite(0x957155),
+  red_mushroom: mushroomSprite(0xd8322a),
+  sweet_berry_bush: berryBush,
+  sugar_cane: sugarCane,
+  bamboo: bambooSprite,
+  azalea: bush(0x6a8a2c),
+  flowering_azalea: bush(0x6a8a2c, 0xd77fd2),
+  pink_petals: petals,
+  lily_pad: lilyPad,
+  pumpkin: pumpkinSide,
+  pumpkin_top: pumpkinTop,
+  melon: melonSide,
+  melon_top: melonTop,
+  cactus: cactusSide,
+  cactus_top: cactusTop,
+  seagrass: grassBlades(0x3f8a2a),
+  tall_seagrass: grassBlades(0x3f8a2a, 16),
+  kelp: kelpSprite,
+  kelp_plant: kelpSprite,
+  sea_pickle: seaPickle,
+  glow_lichen: lichen,
+  hanging_roots: hangingRoots,
+  spore_blossom: sporeBlossom,
+  cave_vines: caveVines(true),
+  cave_vines_plant: caveVines(false),
+  small_dripleaf: dripleaf,
+  big_dripleaf: dripleaf,
+  big_dripleaf_stem: dripleafStem,
+  moss_block: carpet(0x5a7a2c),
+  pale_moss_block: carpet(0x9da396),
+  dripstone_block: rocky(0x86685a),
+  pointed_dripstone: dripstoneSprite,
+  smooth_basalt: rocky(0x48484e, 0.9, 1.05),
+  amethyst_block: rocky(0x8a63c8, 0.85, 1.15),
+  budding_amethyst: rocky(0x7a55b8, 0.8, 1.2),
+  small_amethyst_bud: crystal(0xb88ae8),
+  medium_amethyst_bud: crystal(0xb88ae8),
+  large_amethyst_bud: crystal(0xb88ae8),
+  amethyst_cluster: crystal(0xb88ae8),
+  sculk: sculkBlock,
+  sculk_vein: lichenColor(0x0c3c4c),
+  sculk_sensor: sculkBlock,
+  sculk_shrieker: rocky(0xc8c0a8),
+  sculk_catalyst: sculkBlock,
+  blue_ice: rocky(0x74a8f0, 0.92, 1.06),
+  mossy_cobblestone: mossyCobble,
+  magma_block: magma,
+  spawner: spawner,
+  chest: chestSide,
+  bone_block: boneSide,
+  bone_block_top: boneTop,
+  suspicious_sand: sand,
+  suspicious_gravel: gravel,
+  sandstone_slab: sandstoneSide(0xd8cb9b),
+  tube_coral_block: rocky(0x3355dd, 0.85, 1.12),
+  tube_coral: coral(0x3355dd),
+  tube_coral_fan: coralFan(0x3355dd),
+  tube_coral_wall_fan: coralFan(0x3355dd),
+  brain_coral_block: rocky(0xd85aa8, 0.85, 1.12),
+  brain_coral: coral(0xd85aa8),
+  brain_coral_fan: coralFan(0xd85aa8),
+  brain_coral_wall_fan: coralFan(0xd85aa8),
+  bubble_coral_block: rocky(0xa82ad0, 0.85, 1.12),
+  bubble_coral: coral(0xa82ad0),
+  bubble_coral_fan: coralFan(0xa82ad0),
+  bubble_coral_wall_fan: coralFan(0xa82ad0),
+  fire_coral_block: rocky(0xd8302a, 0.85, 1.12),
+  fire_coral: coral(0xd8302a),
+  fire_coral_fan: coralFan(0xd8302a),
+  fire_coral_wall_fan: coralFan(0xd8302a),
+  horn_coral_block: rocky(0xe0c83a, 0.85, 1.12),
+  horn_coral: coral(0xe0c83a),
+  horn_coral_fan: coralFan(0xe0c83a),
+  horn_coral_wall_fan: coralFan(0xe0c83a)
 } satisfies Record<string, (c: Canvas, r: () => number) => void>
 
 export type TextureName = keyof typeof PAINTERS
@@ -698,5 +997,72 @@ export const TINT_BY_LAYER: Uint8Array = (() => {
   for (const n of ['jungle_leaves', 'acacia_leaves', 'dark_oak_leaves', 'mangrove_leaves'] as const) t[TEXTURE_LAYER[n]] = Tint.foliage
   t[TEXTURE_LAYER.vine] = Tint.foliage | CUTOUT
   for (const n of ['pale_hanging_moss', 'mangrove_propagule', 'cocoa'] as const) t[TEXTURE_LAYER[n]] = CUTOUT
+  // v5.1
+  t[TEXTURE_LAYER.short_grass] = Tint.grass | CUTOUT
+  t[TEXTURE_LAYER.fern] = Tint.grass | CUTOUT
+  t[TEXTURE_LAYER.tall_grass] = Tint.grass | CUTOUT
+  t[TEXTURE_LAYER.large_fern] = Tint.grass | CUTOUT
+  t[TEXTURE_LAYER.dead_bush] = CUTOUT
+  t[TEXTURE_LAYER.dandelion] = CUTOUT
+  t[TEXTURE_LAYER.poppy] = CUTOUT
+  t[TEXTURE_LAYER.blue_orchid] = CUTOUT
+  t[TEXTURE_LAYER.allium] = CUTOUT
+  t[TEXTURE_LAYER.azure_bluet] = CUTOUT
+  t[TEXTURE_LAYER.red_tulip] = CUTOUT
+  t[TEXTURE_LAYER.orange_tulip] = CUTOUT
+  t[TEXTURE_LAYER.white_tulip] = CUTOUT
+  t[TEXTURE_LAYER.pink_tulip] = CUTOUT
+  t[TEXTURE_LAYER.oxeye_daisy] = CUTOUT
+  t[TEXTURE_LAYER.cornflower] = CUTOUT
+  t[TEXTURE_LAYER.lily_of_the_valley] = CUTOUT
+  t[TEXTURE_LAYER.closed_eyeblossom] = CUTOUT
+  t[TEXTURE_LAYER.open_eyeblossom] = CUTOUT
+  t[TEXTURE_LAYER.sunflower] = CUTOUT
+  t[TEXTURE_LAYER.lilac] = CUTOUT
+  t[TEXTURE_LAYER.rose_bush] = CUTOUT
+  t[TEXTURE_LAYER.peony] = CUTOUT
+  t[TEXTURE_LAYER.brown_mushroom] = CUTOUT
+  t[TEXTURE_LAYER.red_mushroom] = CUTOUT
+  t[TEXTURE_LAYER.sweet_berry_bush] = CUTOUT
+  t[TEXTURE_LAYER.sugar_cane] = Tint.grass | CUTOUT
+  t[TEXTURE_LAYER.bamboo] = CUTOUT
+  t[TEXTURE_LAYER.azalea] = CUTOUT
+  t[TEXTURE_LAYER.flowering_azalea] = CUTOUT
+  t[TEXTURE_LAYER.pink_petals] = CUTOUT
+  t[TEXTURE_LAYER.lily_pad] = Tint.foliage | CUTOUT
+  t[TEXTURE_LAYER.seagrass] = CUTOUT
+  t[TEXTURE_LAYER.tall_seagrass] = CUTOUT
+  t[TEXTURE_LAYER.kelp] = CUTOUT
+  t[TEXTURE_LAYER.kelp_plant] = CUTOUT
+  t[TEXTURE_LAYER.sea_pickle] = CUTOUT
+  t[TEXTURE_LAYER.glow_lichen] = CUTOUT
+  t[TEXTURE_LAYER.hanging_roots] = CUTOUT
+  t[TEXTURE_LAYER.spore_blossom] = CUTOUT
+  t[TEXTURE_LAYER.cave_vines] = CUTOUT
+  t[TEXTURE_LAYER.cave_vines_plant] = CUTOUT
+  t[TEXTURE_LAYER.small_dripleaf] = CUTOUT
+  t[TEXTURE_LAYER.big_dripleaf] = CUTOUT
+  t[TEXTURE_LAYER.big_dripleaf_stem] = CUTOUT
+  t[TEXTURE_LAYER.pointed_dripstone] = CUTOUT
+  t[TEXTURE_LAYER.small_amethyst_bud] = CUTOUT
+  t[TEXTURE_LAYER.medium_amethyst_bud] = CUTOUT
+  t[TEXTURE_LAYER.large_amethyst_bud] = CUTOUT
+  t[TEXTURE_LAYER.amethyst_cluster] = CUTOUT
+  t[TEXTURE_LAYER.sculk_vein] = CUTOUT
+  t[TEXTURE_LAYER.tube_coral] = CUTOUT
+  t[TEXTURE_LAYER.tube_coral_fan] = CUTOUT
+  t[TEXTURE_LAYER.tube_coral_wall_fan] = CUTOUT
+  t[TEXTURE_LAYER.brain_coral] = CUTOUT
+  t[TEXTURE_LAYER.brain_coral_fan] = CUTOUT
+  t[TEXTURE_LAYER.brain_coral_wall_fan] = CUTOUT
+  t[TEXTURE_LAYER.bubble_coral] = CUTOUT
+  t[TEXTURE_LAYER.bubble_coral_fan] = CUTOUT
+  t[TEXTURE_LAYER.bubble_coral_wall_fan] = CUTOUT
+  t[TEXTURE_LAYER.fire_coral] = CUTOUT
+  t[TEXTURE_LAYER.fire_coral_fan] = CUTOUT
+  t[TEXTURE_LAYER.fire_coral_wall_fan] = CUTOUT
+  t[TEXTURE_LAYER.horn_coral] = CUTOUT
+  t[TEXTURE_LAYER.horn_coral_fan] = CUTOUT
+  t[TEXTURE_LAYER.horn_coral_wall_fan] = CUTOUT
   return t
 })()

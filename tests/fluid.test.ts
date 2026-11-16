@@ -107,7 +107,7 @@ test('岩浆遇水：岩浆源变黑曜石，流动的岩浆变圆石', () => {
 })
 
 test('流体表面的角高度：水源 8/9，旁边的流动水往外越来越低', () => {
-  const hood = new Uint8Array(N * N * N)
+  const hood = new Uint16Array(N * N * N)
   for (let z = -1; z <= 16; z++) for (let x = -1; x <= 16; x++) hood[nIndex(x, 0, z)] = BlockType.stone
   hood[nIndex(5, 1, 5)] = BlockType.water
   hood[nIndex(6, 1, 5)] = fluidBlock(FluidKind.water, 7)

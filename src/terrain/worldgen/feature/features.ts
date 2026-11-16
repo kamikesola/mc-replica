@@ -5,7 +5,7 @@
  * huge_red_mushroom / huge_brown_mushroom，以及三种“随机选一个”的选择器。
  * 其他类型（花草、湖、晶洞……）暂时当成“什么也不放”，见 FeatureRegistry.unsupported。
  */
-import { blockPredicate, blocksMotion, canBeReplaced, hasFullTopFace, intProvider, isAir, isLeaves, isOutsideBuildHeight, parseState, ruleTest, stateProvider, type WorldGenLevel } from './core'
+import { blockPredicate, blocksMotion, canBeReplaced, hasFullTopFace, intProvider, isAir, isLeaves, isOutsideBuildHeight, parseState, propOfState, withProp, ruleTest, stateProvider, type WorldGenLevel } from './core'
 import { inTag } from './tags'
 import { PlacedFeature, placementModifier, type FeaturePlacer, type PlacementContext } from './placement'
 import { treeFeature } from './tree'
@@ -193,7 +193,9 @@ function freezeTopLayer(): FeaturePlacer {
         if (inTag(below, 'minecraft:snow_layer_cannot_survive_on')) continue
         if (!inTag(below, 'minecraft:snow_layer_can_survive_on') && !hasFullTopFace(below)) continue
         l.setBlock(x, y, z, 'minecraft:snow')
-        // 原版还会把下面的草方块设成 snowy=true（显示成雪地草方块），我们的方块没有这个属性
+        // 下面的草方块、灰化土、菌丝变成 snowy=true（v7，显示成雪地草方块）
+        const bs = l.getState(x, y - 1, z)
+        if (propOfState(bs, 'snowy') !== undefined) l.setBlock(x, y - 1, z, withProp(bs, 'snowy', 'true'))
       }
     return true
   }
@@ -203,6 +205,16 @@ function freezeTopLayer(): FeaturePlacer {
 
 /** 原版 isSolidRender：不透明的完整方块 */
 const isSolidRender = (b: string) => blocksMotion(b) && !isLeaves(b) && b !== 'minecraft:snow' && !b.endsWith('_carpet') && !b.endsWith('glass')
+
+/** 给蘑菇方块设几个面的属性（只有带这些属性的方块才设，原版 hasProperty 检查） */
+function withFaces(state: string, faces: string): string {
+  if (!/_mushroom_block(\[|$)/.test(state)) return state
+  for (const kv of faces.split(',')) {
+    const [k, v] = kv.split('=')
+    state = withProp(state, k, v)
+  }
+  return state
+}
 
 function hugeMushroom(cfg: Record<string, unknown>, red: boolean): FeaturePlacer {
   const cap = stateProvider(cfg.cap_provider)
@@ -233,7 +245,10 @@ function hugeMushroom(cfg: Record<string, unknown>, red: boolean): FeaturePlacer
             const e6 = n === -k || n === k
             if (j < i && e5 === e6) continue
             if (isSolidRender(l.getBlock(x + m, y + j, z + n))) continue
-            l.setBlock(x + m, y + j, z + n, cap(r, x, y, z))
+            // v7：菌盖的哪几面是“皮”（原版 HugeRedMushroomFeature.makeCap）：上面两层朝上；离中心超过 radius-2 的朝外
+            const inner = radius - 2
+            const faces = `up=${j >= i - 1},west=${m < -inner},east=${m > inner},north=${n < -inner},south=${n > inner}`
+            l.setBlock(x + m, y + j, z + n, withFaces(cap(r, x, y, z), faces))
           }
       }
     } else {
@@ -243,7 +258,12 @@ function hugeMushroom(cfg: Record<string, unknown>, red: boolean): FeaturePlacer
           const e6 = m === -radius || m === radius
           if (e5 && e6) continue
           if (isSolidRender(l.getBlock(x + k, y + i, z + m))) continue
-          l.setBlock(x + k, y + i, z + m, cap(r, x, y, z))
+          // v7：棕色菌盖的四个侧面（原版 HugeBrownMushroomFeature.makeCap）：边上一圈朝外，缺角旁边的那一格也朝外
+          const west = k === -radius || (e6 && k === 1 - radius)
+          const east = k === radius || (e6 && k === radius - 1)
+          const north = m === -radius || (e5 && m === 1 - radius)
+          const south = m === radius || (e5 && m === radius - 1)
+          l.setBlock(x + k, y + i, z + m, withFaces(cap(r, x, y, z), `west=${west},east=${east},north=${north},south=${south}`))
         }
     }
     // 菌柄

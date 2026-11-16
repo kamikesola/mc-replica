@@ -7,14 +7,13 @@
 import { intProvider, isAir, isSturdy } from './core'
 import { inTag } from './tags'
 import type { FeaturePlacer } from './placement'
-import { DIRECTIONS, faceStore, shuffle } from './vegetation'
+import { DIRECTIONS, faceMask, setFaces, shuffle } from './vegetation'
 
 const SCULK = 'minecraft:sculk'
 const VEIN = 'minecraft:sculk_vein'
 const WATER = 'minecraft:water'
 const opposite = (d: number) => d ^ 1
 const axis = (d: number) => d >> 1
-const key = (x: number, y: number, z: number) => `${x},${y},${z}`
 
 /** 原版 SculkSpreader.ChargeCursor.NON_CORNER_NEIGHBOURS：3×3×3 里去掉 8 个角和中心，x 最快、然后 y、z */
 const NON_CORNER: [number, number, number][] = []
@@ -48,25 +47,12 @@ export function sculkPatch(cfg: Record<string, unknown>): FeaturePlacer {
   const catalystChance = Math.fround(cfg.catalyst_chance as number)
 
   return (l, r, ox, oy, oz) => {
-    const faces = faceStore(l)
     const at = (x: number, y: number, z: number, d: number) => l.getBlock(x + DIRECTIONS[d][0], y + DIRECTIONS[d][1], z + DIRECTIONS[d][2])
     const canAttach = (x: number, y: number, z: number, d: number) => isSturdy(at(x, y, z, d))
-    const getFaces = (x: number, y: number, z: number) => {
-      const k = key(x, y, z)
-      let m = faces.get(k)
-      if (m === undefined) {
-        m = 0
-        for (let d = 0; d < 6; d++) if (canAttach(x, y, z, d)) m |= 1 << d
-        faces.set(k, m)
-      }
-      return m
-    }
-    const setVein = (x: number, y: number, z: number, mask: number) => {
-      if (l.setBlock(x, y, z, VEIN)) faces.set(key(x, y, z), mask)
-    }
-    const set = (x: number, y: number, z: number, b: string) => {
-      if (l.setBlock(x, y, z, b)) faces.delete(key(x, y, z))
-    }
+    // v7：脉络贴着哪几面直接存在方块状态里
+    const getFaces = (x: number, y: number, z: number) => faceMask(l, x, y, z, VEIN)
+    const setVein = (x: number, y: number, z: number, mask: number) => setFaces(l, x, y, z, VEIN, mask)
+    const set = (x: number, y: number, z: number, b: string) => l.setBlock(x, y, z, b)
     const isBehaviour = (b: string) => b === SCULK || b === VEIN
     const hasFace = (b: string, x: number, y: number, z: number, d: number) => b === VEIN && (getFaces(x, y, z) & (1 << d)) !== 0
 
@@ -185,7 +171,7 @@ export function sculkPatch(cfg: Record<string, unknown>): FeaturePlacer {
         if (i === 0 || r.nextInt(CHARGE_DECAY_RATE) !== 0) return i
         const near = (c.x - ox) ** 2 + (c.y - oy) ** 2 + (c.z - oz) ** 2 < NO_GROWTH_RADIUS * NO_GROWTH_RADIUS
         if (!near && canPlaceGrowth(c.x, c.y, c.z)) {
-          if (r.nextInt(GROWTH_SPAWN_COST) < i) set(c.x, c.y + 1, c.z, r.nextInt(11) === 0 ? 'minecraft:sculk_shrieker' : 'minecraft:sculk_sensor')
+          if (r.nextInt(GROWTH_SPAWN_COST) < i) set(c.x, c.y + 1, c.z, r.nextInt(11) === 0 ? 'minecraft:sculk_shrieker[can_summon=true]' : 'minecraft:sculk_sensor') // v7：世界生成的尖啸体 can_summon=true
           return Math.max(0, i - GROWTH_SPAWN_COST)
         }
         return r.nextInt(ADDITIONAL_DECAY_RATE) !== 0 ? i : i - (near ? 1 : decayPenalty(c, i))
@@ -293,7 +279,7 @@ export function sculkPatch(cfg: Record<string, unknown>): FeaturePlacer {
     for (let a = 0; a < n; a++) {
       const px = ox + r.nextInt(5) - 2
       const pz = oz + r.nextInt(5) - 2
-      if (isAir(l.getBlock(px, oy, pz)) && isSturdy(l.getBlock(px, oy - 1, pz))) set(px, oy, pz, 'minecraft:sculk_shrieker')
+      if (isAir(l.getBlock(px, oy, pz)) && isSturdy(l.getBlock(px, oy - 1, pz))) set(px, oy, pz, 'minecraft:sculk_shrieker[can_summon=true]')
     }
     return true
   }

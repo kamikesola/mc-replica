@@ -13,7 +13,7 @@
  * 区域里按“先 z 后 x”依次装饰，后面的看得到前面的；不同区域之间只看原型。
  * 这样结果和加载顺序无关，多个 Worker 各算各的也能拼上（同一个区域固定交给同一个 Worker，缓存才能复用）。
  */
-import { BLOCK_BY_NAME, BlockType, FLUID_KIND, FluidKind, NAME_BY_BLOCK } from '../blocks'
+import { BLOCK_OF, BlockType, FLUID_KIND, FluidKind, fullStateName, NAME_BY_STATE, parseState, stateOf } from '../blocks'
 import type { NoiseSettingsInfo, Worldgen } from '../worldgen'
 import { blocksMotion, isLeaves, type HeightmapType, type WorldGenLevel } from '../worldgen/feature/core'
 import { applyBiomeDecoration, buildFeaturesPerStep } from '../worldgen/feature/decorate'
@@ -45,9 +45,9 @@ interface Proto extends ProtoChunk {
 }
 
 /** 一个区块的装饰结果：对周围 3×3 每个区块，改了哪些格子、改成什么 */
-type Decoration = { idx: Int32Array; ids: Uint8Array }[]
+type Decoration = { idx: Int32Array; ids: Uint16Array }[]
 
-const NAMES = NAME_BY_BLOCK
+const NAMES = NAME_BY_STATE
 /** 按方块 ID 预先算好的性质（高度图用） */
 const MOTION = Uint8Array.from(NAMES.map((n) => (blocksMotion(n) ? 1 : 0)))
 /** 有流体（含水的方块也算，原版 MOTION_BLOCKING 看的是 getFluidState） */
@@ -134,7 +134,7 @@ export class ChunkSource {
     const H = s.height
     const minY = s.minY
     const protos: Proto[] = []
-    const blocks: Uint8Array[] = []
+    const blocks: Uint16Array[] = []
     for (let dz = -1; dz <= 1; dz++)
       for (let dx = -1; dx <= 1; dx++) {
         const p = this.proto(cx + dx, cz + dz)
@@ -167,7 +167,7 @@ export class ChunkSource {
       return sx < 0 || sx > 2 || sz < 0 || sz > 2 ? -1 : sz * 3 + sx
     }
     const index = (x: number, y: number, z: number) => (y - minY) * 256 + (z & 15) * 16 + (x & 15)
-    const scan = (b: Uint8Array, col: number, test: (id: number) => boolean) => {
+    const scan = (b: Uint16Array, col: number, test: (id: number) => boolean) => {
       let y = H - 1
       while (y >= 0 && !test(b[y * 256 + col])) y--
       return y + 1 + minY
@@ -183,11 +183,16 @@ export class ChunkSource {
         if (i < 0 || y < minY || y >= minY + H) return 'minecraft:air'
         return NAMES[blocks[i][index(x, y, z)]]
       },
+      getState: (x, y, z) => {
+        const i = slot(x, z)
+        if (i < 0 || y < minY || y >= minY + H) return 'minecraft:air'
+        return fullStateName(blocks[i][index(x, y, z)])
+      },
       canWrite: (x, y, z) => slot(x, z) >= 0 && y >= minY && y < minY + H,
       setBlock: (x, y, z, state) => {
         const i = slot(x, z)
         if (i < 0 || y < minY || y >= minY + H) return false
-        const id = BLOCK_BY_NAME[state]
+        const id = parseState(state)
         if (id === undefined) return false // 我们没有的方块（还没实现的地物才会放）
         blocks[i][index(x, y, z)] = id
         return true
@@ -237,7 +242,7 @@ export class ChunkSource {
           idx.push(j)
           ids.push(b[j])
         }
-      return { idx: Int32Array.from(idx), ids: Uint8Array.from(ids) }
+      return { idx: Int32Array.from(idx), ids: Uint16Array.from(ids) }
     })
     this.decorations.set(k, d)
     return d
@@ -248,7 +253,7 @@ export class ChunkSource {
    * 中心区块 (ox, oz) 周围 3×3 的装饰都叠上去（按 z、x 从小到大的固定顺序）；
    * 拿邻居区块（只用来补网格边上一圈）时，只叠和中心共享的那些装饰，避免再去算更远的区块。
    */
-  withDecorations(cx: number, cz: number, ox = cx, oz = cz): Uint8Array {
+  withDecorations(cx: number, cz: number, ox = cx, oz = cz): Uint16Array {
     const out = this.proto(cx, cz).blocks.slice()
     // 叠的顺序：先按区域、再按区域里的先后（和装饰时“谁先放”的顺序一致）
     const key = ([dx, dz]: [number, number]) => {
@@ -280,12 +285,14 @@ export class ChunkSource {
  * 气泡柱（v5.2）：原版岩浆块、灵魂沙放下时安排一次方块刻，刻到的时候把上面连着的水源都变成气泡柱。
  * 生成的区块加载后马上就会刻到，所以这里直接在装饰完的区块上做（只看同一列，不跨区块）。
  */
-function bubbleColumns(blocks: Uint8Array): void {
+function bubbleColumns(blocks: Uint16Array): void {
   const H = blocks.length >> 8
   for (let i = 0; i < 256; i++)
     for (let y = 0; y < H - 1; y++) {
       const b = blocks[y * 256 + i]
       if (b !== BlockType.magma_block && b !== BlockType.soul_sand) continue
-      for (let k = y + 1; k < H && (blocks[k * 256 + i] === BlockType.water || blocks[k * 256 + i] === BlockType.bubble_column); k++) blocks[k * 256 + i] = BlockType.bubble_column
+      // 岩浆块上面往下拉（drag=true，默认），灵魂沙上面往上推（drag=false）（v7）
+      const column = b === BlockType.soul_sand ? stateOf(BlockType.bubble_column, { drag: false }) : BlockType.bubble_column
+      for (let k = y + 1; k < H && (blocks[k * 256 + i] === BlockType.water || BLOCK_OF[blocks[k * 256 + i]] === BlockType.bubble_column); k++) blocks[k * 256 + i] = column
     }
 }

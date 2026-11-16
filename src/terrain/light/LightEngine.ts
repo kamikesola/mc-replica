@@ -1,4 +1,4 @@
-import { NAME_BY_BLOCK } from '../blocks'
+import { fullStateName, NAME_BY_STATE, STATE_COUNT, STATES } from '../blocks'
 import PROPS from './lightProps.json'
 
 /**
@@ -25,19 +25,24 @@ import PROPS from './lightProps.json'
  * 每格最多展开一次。
  */
 
-/** 方块 ID → lightBlock / lightEmission。原版名不在表里的（不应该有）按“不透明、不发光”算 */
-export const LIGHT_BLOCK = new Uint8Array(256).fill(15)
-export const LIGHT_EMISSION = new Uint8Array(256)
-for (let b = 0; b < 256; b++) {
-  const p = (PROPS as Record<string, number[]>)[NAME_BY_BLOCK[b] ?? '']
+/**
+ * 状态 → lightBlock / lightEmission（v7 起按状态：洞穴藤蔓有浆果才发光，海泡菜越多越亮，含水的方块挡 1 级光）。
+ * 表里一个方块要么是一组值（所有状态一样），要么按状态顺序一个列表。不在表里的（不应该有）按“不透明、不发光”算
+ */
+export const LIGHT_BLOCK = new Uint8Array(STATE_COUNT).fill(15)
+export const LIGHT_EMISSION = new Uint8Array(STATE_COUNT)
+for (let s = 0; s < STATE_COUNT; s++) {
+  const p = (PROPS as unknown as Record<string, number[] | number[][]>)[NAME_BY_STATE[s] ?? '']
   if (!p) continue
-  LIGHT_BLOCK[b] = p[0]
-  LIGHT_EMISSION[b] = p[1]
+  const v = (Array.isArray(p[0]) ? (p as number[][])[STATES.indexOf[s]] : p) as number[]
+  LIGHT_BLOCK[s] = v[0]
+  LIGHT_EMISSION[s] = v[1]
 }
 
-/** 底面完整、按形状挡光的方块（原版 useShapeForLightOcclusion，见上） */
-export const OCCLUDE_DOWN = new Uint8Array(256)
-for (let b = 0; b < 256; b++) if (/^minecraft:(snow|sandstone_slab|sculk_sensor|sculk_shrieker)$/.test(NAME_BY_BLOCK[b] ?? '')) OCCLUDE_DOWN[b] = 1
+/** 底面完整、按形状挡光的状态（原版 useShapeForLightOcclusion，见上）：雪层 1..7 层、下半台阶、幽匿感测体 / 尖啸体 */
+export const OCCLUDE_DOWN = new Uint8Array(STATE_COUNT)
+for (let s = 0; s < STATE_COUNT; s++)
+  if (/^minecraft:snow(\[layers=[1-7]\])?$|_slab\[type=bottom|^minecraft:(calibrated_)?sculk_sensor|^minecraft:sculk_shrieker/.test(fullStateName(s))) OCCLUDE_DOWN[s] = 1
 
 /**
  * 一个区域的光照。
@@ -45,7 +50,7 @@ for (let b = 0; b < 256; b++) if (/^minecraft:(snow|sandstone_slab|sculk_sensor|
  * @param sky   是否有天空光（原版 dimension_type 的 has_skylight：主世界有，下界和末地没有）
  * @returns     每格一个字节：低 4 位天空光，高 4 位方块光
  */
-export function lightRegion(grid: Uint8Array, W: number, D: number, H: number, sky: boolean, lb = LIGHT_BLOCK, em = LIGHT_EMISSION, occ = OCCLUDE_DOWN): Uint8Array {
+export function lightRegion(grid: Uint16Array, W: number, D: number, H: number, sky: boolean, lb = LIGHT_BLOCK, em = LIGHT_EMISSION, occ = OCCLUDE_DOWN): Uint8Array {
   const out = new Uint8Array(grid.length)
   const level = new Uint8Array(grid.length)
   const buckets = new Buckets()
@@ -92,7 +97,7 @@ export function lightRegion(grid: Uint8Array, W: number, D: number, H: number, s
  * 每一列的天空光源下界：从上往下第一个 lightBlock ≠ 0 的方块的上面一格；整列都透明则是 0。
  * 底面挡光的方块（雪层）：光源停在它这一格
  */
-export function skySources(grid: Uint8Array, W: number, D: number, H: number, lb = LIGHT_BLOCK, occ = OCCLUDE_DOWN): Int16Array {
+export function skySources(grid: Uint16Array, W: number, D: number, H: number, lb = LIGHT_BLOCK, occ = OCCLUDE_DOWN): Int16Array {
   const src = new Int16Array(W * D)
   for (let z = 0; z < D; z++)
     for (let x = 0; x < W; x++) src[z * W + x] = columnSource(grid, (y) => (y * D + z) * W + x, H, lb, occ)
@@ -100,14 +105,14 @@ export function skySources(grid: Uint8Array, W: number, D: number, H: number, lb
 }
 
 /** 一列的天空光源下界（at(y) 给出这一列第 y 格的下标） */
-export function columnSource(grid: Uint8Array, at: (y: number) => number, H: number, lb = LIGHT_BLOCK, occ = OCCLUDE_DOWN): number {
+export function columnSource(grid: Uint16Array, at: (y: number) => number, H: number, lb = LIGHT_BLOCK, occ = OCCLUDE_DOWN): number {
   let y = H - 1
   while (y >= 0 && lb[grid[at(y)]] === 0 && (y === H - 1 || !occ[grid[at(y + 1)]])) y--
   return y + 1
 }
 
 /** 按亮度从高到低扩散（原版 LightEngine.propagateIncrease） */
-function spread(grid: Uint8Array, level: Uint8Array, buckets: Buckets, W: number, D: number, H: number, lb: Uint8Array, occ: Uint8Array): void {
+function spread(grid: Uint16Array, level: Uint8Array, buckets: Buckets, W: number, D: number, H: number, lb: Uint8Array, occ: Uint8Array): void {
   const plane = W * D
   for (let l = 15; l >= 2; l--) {
     const q = buckets.take(l)
@@ -164,9 +169,9 @@ export const LP = 18
  * 输出中心区块加四周一圈（18×18 列）的光照。
  * 光最多传 15 格，3×3 足够让中心区块和它外面的一圈都是精确值。
  */
-export function lightChunk(chunks: Uint8Array[], H: number, sky: boolean, lb = LIGHT_BLOCK, em = LIGHT_EMISSION, occ = OCCLUDE_DOWN): Uint8Array {
+export function lightChunk(chunks: Uint16Array[], H: number, sky: boolean, lb = LIGHT_BLOCK, em = LIGHT_EMISSION, occ = OCCLUDE_DOWN): Uint8Array {
   const W = 48
-  const grid = new Uint8Array(W * W * H)
+  const grid = new Uint16Array(W * W * H)
   for (let dz = 0; dz < 3; dz++)
     for (let dx = 0; dx < 3; dx++) {
       const c = chunks[dz * 3 + dx]

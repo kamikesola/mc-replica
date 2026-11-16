@@ -1,4 +1,4 @@
-import { BLOCK_BITS, BLOCK_BY_NAME, BlockType, NAME_BY_BLOCK } from '../blocks'
+import { STATE_BITS, BLOCK_BY_NAME, BlockType, NAME_BY_STATE } from '../blocks'
 import PalettedContainer, { type PalettedData } from '../chunk/PalettedContainer'
 import { meshSection, N, nIndex, type MeshOptions, type SectionMesh } from '../mesh/mesher'
 import { fillLightHood, lightChunk } from '../light/LightEngine'
@@ -40,7 +40,7 @@ const FLUID_BLOCK = [BlockType.air, BlockType.water, BlockType.lava]
 
 export interface ProtoChunk {
   /** blocks[((y - minY) * 16 + lz) * 16 + lx]：地形 + 含水层 + 矿脉 + 地表，还没有地物 */
-  blocks: Uint8Array
+  blocks: Uint16Array
   /** 生成完马上要“流一下”的流体（区块内下标） */
   fluidUpdates: Int32Array
 }
@@ -56,7 +56,7 @@ export function protoChunk(wg: Worldgen, settingsId: string, s: NoiseSettingsInf
   const H = s.height
   const minY = s.minY
   const sea = s.seaLevel
-  const blocks = new Uint8Array(16 * 16 * H)
+  const blocks = new Uint16Array(16 * 16 * H)
   const bidx = (lx: number, y: number, lz: number) => ((y - minY) * 16 + lz) * 16 + lx
   const wx0 = cx * 16
   const wz0 = cz * 16
@@ -114,7 +114,7 @@ export function protoChunk(wg: Worldgen, settingsId: string, s: NoiseSettingsInf
       minY,
       height: H,
       column: (lx, lz) => ({
-        get: (y) => (y < minY || y >= minY + H ? 'minecraft:air' : NAME_BY_BLOCK[blocks[bidx(lx, y, lz)]]),
+        get: (y) => (y < minY || y >= minY + H ? 'minecraft:air' : NAME_BY_STATE[blocks[bidx(lx, y, lz)]]),
         set: (y, name) => {
           if (y < minY || y >= minY + H) return
           blocks[bidx(lx, y, lz)] = BLOCK_BY_NAME[name] ?? BlockType.stone
@@ -139,7 +139,7 @@ export function protoChunk(wg: Worldgen, settingsId: string, s: NoiseSettingsInf
         cz,
         minY,
         height: H,
-        get: (x, y, z) => NAME_BY_BLOCK[blocks[bidx(x - wx0, y, z - wz0)]],
+        get: (x, y, z) => NAME_BY_STATE[blocks[bidx(x - wx0, y, z - wz0)]],
         set: (x, y, z, name) => {
           const lx = x - wx0
           const lz = z - wz0
@@ -204,7 +204,7 @@ export function generateChunk(wg: Worldgen, settingsId: string, s: NoiseSettings
   const features = opts.features !== false && src.hasFeatures
 
   // padded[((y-minY)*W + pz)*W + px]，px/pz = 局部坐标 + 1
-  const padded = new Uint8Array(W * W * H)
+  const padded = new Uint16Array(W * W * H)
   const pidx = (px: number, y: number, pz: number) => ((y - minY) * W + pz) * W + px
   for (let dz = -1; dz <= 1; dz++)
     for (let dx = -1; dx <= 1; dx++) {
@@ -270,10 +270,10 @@ export function generateChunk(wg: Worldgen, settingsId: string, s: NoiseSettings
   const sectionCount = H >> 4
   const sections: PalettedData[] = []
   const meshes: SectionMeshes[] = []
-  const values = new Uint8Array(4096)
-  const hood = new Uint8Array(N * N * N) // 18³ 邻域，给网格生成用
+  const values = new Uint16Array(4096)
+  const hood = new Uint16Array(N * N * N) // 18³ 邻域，给网格生成用
   // 中间 16×16 列的最终方块（v6：主线程留一份不压缩的，算光照时发给 Worker）
-  const flat = new Uint8Array(16 * 16 * H)
+  const flat = new Uint16Array(16 * 16 * H)
   for (let y = 0; y < H; y++)
     for (let lz = 0; lz < 16; lz++) flat.set(padded.subarray((y * W + lz + PAD) * W + PAD, (y * W + lz + PAD) * W + PAD + 16), (y * 16 + lz) * 16)
   const at = (px: number, y: number, pz: number) => (y < minY || y >= minY + H ? BlockType.air : padded[pidx(px, y, pz)])
@@ -284,7 +284,7 @@ export function generateChunk(wg: Worldgen, settingsId: string, s: NoiseSettings
     for (let ly = 0; ly < 16; ly++)
       for (let lz = 0; lz < 16; lz++)
         for (let lx = 0; lx < 16; lx++) values[(ly * 16 + lz) * 16 + lx] = padded[pidx(lx + PAD, y0 + ly, lz + PAD)]
-    const container = PalettedContainer.fromValues(values, BLOCK_BITS)
+    const container = PalettedContainer.fromValues(values, STATE_BITS)
     sections.push(container.toData())
 
     // 整段都是空气：没有任何面，跳过网格；v6 起网格在算完光照之后才生成（见 meshChunk），这里可以不生成
@@ -306,10 +306,10 @@ export function generateChunk(wg: Worldgen, settingsId: string, s: NoiseSettings
  * 光照 + 网格（v6）：输入周围 3×3 个区块的最终方块（先 z 后 x），算出中心区块的光照，再生成它每个 section 的网格。
  * 区块要等它周围 8 个都生成好了才能做这一步——光会从邻居照过来，网格边上的面和亮度也要看邻居。
  */
-export function meshChunk(chunks: Uint8Array[], H: number, sky: boolean, opts: MeshOptions = {}): { light: Uint8Array; meshes: SectionMeshes[] } {
+export function meshChunk(chunks: Uint16Array[], H: number, sky: boolean, opts: MeshOptions = {}): { light: Uint8Array; meshes: SectionMeshes[] } {
   const light = lightChunk(chunks, H, sky)
   const meshes: SectionMeshes[] = []
-  const hood = new Uint8Array(N * N * N)
+  const hood = new Uint16Array(N * N * N)
   const hoodLight = new Uint8Array(N * N * N)
   const center = chunks[4]
   for (let sy = 0; sy < H >> 4; sy++) {
@@ -341,7 +341,7 @@ export function meshChunk(chunks: Uint8Array[], H: number, sky: boolean, opts: M
  * v0~v3 的临时地表规则，现在只给没有 surface_rule 的 noise_settings（demo 的简化地形）用：
  * 水下是沙 / 沙砾，海边是沙滩，其他是草 + 3 层土；y < 0 深板岩（0..7 过渡），最底下几层基岩。
  */
-function temporarySurface(padded: Uint8Array, wx0: number, wz0: number, minY: number, H: number, sea: number) {
+function temporarySurface(padded: Uint16Array, wx0: number, wz0: number, minY: number, H: number, sea: number) {
   const pidx = (px: number, y: number, pz: number) => ((y - minY) * 16 + pz) * 16 + px
   for (let pz = 0; pz < 16; pz++) {
     for (let px = 0; px < 16; px++) {

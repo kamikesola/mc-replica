@@ -62,7 +62,7 @@ function channel(w: LightWorld, x: number, y: number, z: number, oldBlock: numbe
     const k = `${x},${z}`
     let s = override === undefined ? sources.get(k) : undefined
     if (s === undefined) {
-      const col = new Uint8Array(H)
+      const col = new Uint16Array(H)
       for (let i = 0; i < H; i++) col[i] = w.minY + i === y && x === x0 && z === z0 && override !== undefined ? override : w.block(x, w.minY + i, z)
       s = w.minY + columnSource(col, (i) => i, H)
       if (override === undefined) sources.set(k, s)

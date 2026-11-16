@@ -25,7 +25,7 @@ export default class Chunk {
    */
   staleSections = new Set<number>()
   /** 不压缩的方块，下标同 Chunk.index（v6） */
-  flat: Uint8Array
+  flat: Uint16Array
   /** 光照（v6）：18×18 列，下标 ((y - minY) * 18 + lz + 1) * 18 + lx + 1，低 4 位天空光、高 4 位方块光；还没点亮时为 null */
   light: Uint8Array | null = null
   /** 正在 Worker 里算光照 */
@@ -39,13 +39,13 @@ export default class Chunk {
     readonly minY: number,
     readonly height: number,
     sections?: Section[],
-    flat?: Uint8Array
+    flat?: Uint16Array
   ) {
     const count = height >> 4
     this.sections = sections ?? Array.from({ length: count }, () => new Section())
     if (flat) this.flat = flat
     else {
-      this.flat = new Uint8Array(height * 256)
+      this.flat = new Uint16Array(height * 256)
       this.sections.forEach((s, sy) => {
         for (let i = 0; i < 4096; i++) this.flat[sy * 4096 + i] = s.blocks.get(i)
       })
@@ -78,6 +78,12 @@ export default class Chunk {
     this.sections[ry >> 4].set(lx, ry & 15, lz, type)
     this.flat[(ry * 16 + lz) * 16 + lx] = type
     this.version++
+  }
+
+  /** 按 flat 下标直接改一格（v7：区块落定时用），不增加版本号 */
+  setRaw(i: number, type: number): void {
+    this.flat[i] = type
+    this.sections[i >> 12].blocks.set(i & 4095, type)
   }
 
   /** 光照数组里的下标（lx、lz 可以是 -1..16） */

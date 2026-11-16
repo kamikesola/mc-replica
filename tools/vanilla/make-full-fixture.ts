@@ -7,7 +7,7 @@
  * 每类最多 3 个区块。存的是方块坐标和方块名，不是原版的文件。
  */
 import { readFileSync, writeFileSync } from 'node:fs'
-import { NAME_BY_BLOCK } from '../../src/terrain/blocks'
+import { NAME_BY_STATE } from '../../src/terrain/blocks'
 import { chunkSource } from '../../src/terrain/worker/surface'
 import { Worldgen } from '../../src/terrain/worldgen/Worldgen'
 import { repoPath, vanillaPack } from '../../tests/loadDatapack'
@@ -44,7 +44,7 @@ for (const f of files)
           let n = 0
           let bad = false
           for (let i = 0; i < o.length; i++) {
-            const p = NAME_BY_BLOCK[o[i]]
+            const p = NAME_BY_STATE[o[i]]
             const q = v.blocks[i] ?? 'minecraft:air'
             if (!re.test(p) && !re.test(q)) continue
             if (p !== q) {

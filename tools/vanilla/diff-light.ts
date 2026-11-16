@@ -12,7 +12,7 @@
  * （方块不一样，光照当然可能不一样）。
  */
 import { readFileSync } from 'node:fs'
-import { NAME_BY_BLOCK } from '../../src/terrain/blocks'
+import { NAME_BY_STATE } from '../../src/terrain/blocks'
 import { lightChunk, LP } from '../../src/terrain/light/LightEngine'
 import { chunkSource } from '../../src/terrain/worker/surface'
 import { Worldgen, type PackInput } from '../../src/terrain/worldgen/Worldgen'
@@ -60,9 +60,9 @@ for (const line of readFileSync(new URL('./out/light-states.tsv', import.meta.ur
   STATE_PROPS.set(st, c)
 }
 const OPAQUE = combos.get('15,0,0')!
-function vanillaGrid(dir: string, cx: number, cz: number, minY: number, H: number): Uint8Array {
+function vanillaGrid(dir: string, cx: number, cz: number, minY: number, H: number): Uint16Array {
   const c = vchunk(dir, cx, cz)
-  const out = new Uint8Array(H * 256).fill(OPAQUE) // 没有这个区块：当成不透明
+  const out = new Uint16Array(H * 256).fill(OPAQUE) // 没有这个区块：当成不透明
   if (!c) return out
   for (let y = minY; y < minY + H; y++)
     for (let i = 0; i < 256; i++) {
@@ -158,7 +158,7 @@ for (const [dim, list, name] of jobs) {
   for (const [cx, cz] of list) {
     const v = loadChunk(world + DIM_DIR[dim], cx, cz)
     if (!v || v.status !== 'minecraft:full') continue
-    const nine: Uint8Array[] = []
+    const nine: Uint16Array[] = []
     for (let dz = -1; dz <= 1; dz++)
       for (let dx = -1; dx <= 1; dx++) nine.push(useVanillaBlocks ? vanillaGrid(world + DIM_DIR[dim], cx + dx, cz + dz, s.minY, s.height) : blocksOf(cx + dx, cz + dz))
     const light = useVanillaBlocks ? lightChunk(nine, s.height, hasSky, COMBO_LB, COMBO_EM, COMBO_OCC) : lightChunk(nine, s.height, hasSky)
@@ -173,7 +173,7 @@ for (const [dim, list, name] of jobs) {
           const theirs = vanillaLight(v, x, y, z)
           if (!hasSky) theirs.sky = 0
           const vb = v.blocks[(y - v.minY) * 256 + z * 16 + x]?.replace(/cave_air|void_air/, 'air')
-          const sameBlock = useVanillaBlocks || NAME_BY_BLOCK[ours[(y - s.minY) * 256 + z * 16 + x]] === vb
+          const sameBlock = useVanillaBlocks || NAME_BY_STATE[ours[(y - s.minY) * 256 + z * 16 + x]] === vb
           for (const k of ['sky', 'block'] as const) {
             r[k][1]++
             total[k][1]++

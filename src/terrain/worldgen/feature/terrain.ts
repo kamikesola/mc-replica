@@ -2,7 +2,7 @@
  * 地形类地物（v5.1）：熔岩湖、泉、冰刺、蓝冰、森林岩、沙漠井、地牢、水下岩浆、晶洞、滴水石。
  * 都对应原版同名的 Feature 类，随机数的消耗顺序照字节码（见 docs/notes/v5.1-notes.md）。
  */
-import { blocksMotion, intProvider, intRange, floatProvider, isAir, isLiquid, parseState, stateProvider, type WorldGenLevel } from './core'
+import { blocksMotion, intProvider, intRange, floatProvider, isAir, isLiquid, isSolidRender, parseState, withProp, stateProvider, type WorldGenLevel } from './core'
 import { inTag } from './tags'
 import type { FeaturePlacer } from './placement'
 import { cos, sin } from '../math/Mth'
@@ -18,6 +18,32 @@ const LAVA = 'minecraft:lava'
 const DIRS: [number, number, number][] = [[0, -1, 0], [0, 1, 0], [0, 0, -1], [0, 0, 1], [-1, 0, 0], [1, 0, 0]]
 /** 原版 Direction.Plane.HORIZONTAL：北、东、南、西 */
 const HORIZONTAL: [number, number][] = [[0, -1], [1, 0], [0, 1], [-1, 0]]
+/**
+ * 原版 StructurePiece.reorient（v7）：箱子背靠唯一的那面墙；不止一面就从默认的朝北开始，挡住了就转
+ */
+function reorientChest(l: WorldGenLevel, x: number, y: number, z: number): string {
+  const names = ['north', 'east', 'south', 'west']
+  const solid = (d: number) => isSolidRender(l.getBlock(x + HORIZONTAL[d][0], y, z + HORIZONTAL[d][1]))
+  let dir = -1
+  for (let d = 0; d < 4; d++) {
+    const b = l.getBlock(x + HORIZONTAL[d][0], y, z + HORIZONTAL[d][1])
+    if (b === 'minecraft:chest') return 'north'
+    if (isSolidRender(b)) {
+      if (dir >= 0) {
+        dir = -1
+        break
+      }
+      dir = d
+    }
+  }
+  if (dir >= 0) return names[(dir + 2) & 3]
+  let d2 = 0 // 默认朝北
+  if (solid(d2)) d2 = (d2 + 2) & 3
+  if (solid(d2)) d2 = (d2 + 1) & 3
+  if (solid(d2)) d2 = (d2 + 2) & 3
+  return names[d2]
+}
+
 /** 原版 Feature.isReplaceable(FEATURES_CANNOT_REPLACE) */
 const canReplace = (b: string) => !inTag(b, 'minecraft:features_cannot_replace')
 const isDirt = (b: string) => inTag(b, 'minecraft:dirt')
@@ -326,7 +352,7 @@ export function monsterRoom(): FeaturePlacer {
         let walls = 0
         for (const [dx, dz] of HORIZONTAL) if (blocksMotion(l.getBlock(px + dx, y, pz + dz))) walls++
         if (walls !== 1) continue
-        safe(px, y, pz, 'minecraft:chest')
+        safe(px, y, pz, `minecraft:chest[facing=${reorientChest(l, px, y, pz)}]`)
         if (l.getBlock(px, y, pz) === 'minecraft:chest') r.nextLong() // 战利品表的种子
         break
       }
@@ -444,12 +470,17 @@ export function geode(cfg: Record<string, unknown>): FeaturePlacer {
           else safe(px, py, pz, outer(r, px, py, pz))
         }
     // 紫水晶芽：贴着母岩，朝第一个空着（空气或水源）的方向长
+    // v7：芽的 facing = 长出去的方向；长进水源里的含水（原版按 Direction.values() 的顺序试）
+    const FACING = ['down', 'up', 'north', 'south', 'west', 'east']
     for (const [px, py, pz] of potential) {
       const s = placements[r.nextInt(placements.length)]
-      for (const [dx, dy, dz] of DIRS) {
+      for (let d = 0; d < 6; d++) {
+        const [dx, dy, dz] = DIRS[d]
         const b = l.getBlock(px + dx, py + dy, pz + dz)
         if (isAir(b) || b === WATER) {
-          safe(px + dx, py + dy, pz + dz, s)
+          let st = s
+          if (/_bud|amethyst_cluster/.test(st)) st = withProp(withProp(st, 'facing', FACING[d]), 'waterlogged', l.getState(px + dx, py + dy, pz + dz) === 'minecraft:water[level=0]')
+          safe(px + dx, py + dy, pz + dz, st)
           break
         }
       }
@@ -470,10 +501,26 @@ const placeDripstoneBlock = (l: WorldGenLevel, x: number, y: number, z: number) 
   l.setBlock(x, y, z, 'minecraft:dripstone_block')
   return true
 }
-/** 原版 growPointedDripstone：从根往 dir 方向长一根 height 格的滴水石锥（根的反方向要是滴水石块） */
-function growPointedDripstone(l: WorldGenLevel, x: number, y: number, z: number, dir: 1 | -1, height: number) {
+/**
+ * 原版 growPointedDripstone：从根往 dir 方向长一根 height 格的滴水石锥（根的反方向要是滴水石块）。
+ * v7：每格的状态按原版 buildBaseToTipColumn——根部 base、中间 middle、倒数第二格 frustum、尖 tip
+ * （上下两根连在一起时尖是 tip_merge）；朝向 up / down；在水里的含水
+ */
+function growPointedDripstone(l: WorldGenLevel, x: number, y: number, z: number, dir: 1 | -1, height: number, mergeTips = false) {
   if (!isDripstoneBase(l.getBlock(x, y - dir, z))) return
-  for (let i = 0; i < height; i++) l.setBlock(x, y + i * dir, z, 'minecraft:pointed_dripstone')
+  const parts: string[] = []
+  if (height >= 3) {
+    parts.push('base')
+    for (let i = 0; i < height - 3; i++) parts.push('middle')
+  }
+  if (height >= 2) parts.push('frustum')
+  if (height >= 1) parts.push(mergeTips ? 'tip_merge' : 'tip')
+  const vd = dir > 0 ? 'up' : 'down'
+  parts.forEach((t, i) => {
+    const py = y + i * dir
+    const wet = l.getState(x, py, z) === 'minecraft:water[level=0]'
+    l.setBlock(x, py, z, `minecraft:pointed_dripstone[thickness=${t},vertical_direction=${vd},waterlogged=${wet}]`)
+  })
 }
 
 export function pointedDripstone(cfg: Record<string, unknown>): FeaturePlacer {
@@ -599,10 +646,11 @@ export function dripstoneCluster(cfg: Record<string, unknown>): FeaturePlacer {
           t = j
           u = m
         }
-        r.nextBoolean() // 两根是不是连在一起（tip_merge，只影响方块状态，columnHeight(column) 用不上）
+        // 两根正好连起来时，尖是 tip_merge（v7）
+        const merge = r.nextBoolean() && t > 0 && u > 0 && ceil !== null && floor !== null && t + u === ceil - floor - 1
         void columnHeight(column)
-        if (ceil !== null) growPointedDripstone(l, px, ceil - 1, pz, -1, t)
-        if (floor !== null) growPointedDripstone(l, px, floor + 1, pz, 1, u)
+        if (ceil !== null) growPointedDripstone(l, px, ceil - 1, pz, -1, t, merge)
+        if (floor !== null) growPointedDripstone(l, px, floor + 1, pz, 1, u, merge)
       }
     return true
   }

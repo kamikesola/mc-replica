@@ -73,10 +73,18 @@ Chunk（16×16×384）
      └─ PalettedContainer
          ├─ bits = 0     单值：只有 palette[0]
          ├─ bits 4..8    间接：palette + BitStorage（存调色板下标）
-         └─ bits > 8     直接：BitStorage 存方块 ID
+         └─ bits > 8     直接：BitStorage 存方块状态编号（v7 起 12 位）
 ```
 
 段内下标 `(y * 16 + z) * 16 + x`，和原版相同。`Chunk.index()`（整根柱子内的编号）只给 `edits` 当 key 用。
+
+## 方块状态（v7）
+
+每一格存的是**状态编号**（`Uint16`），不是方块编号。规则（`terrain/states.ts`）：方块 b 的默认状态编号就是 b；
+其余状态排在所有方块后面，同一方块内部的顺序和原版状态 ID 一样。所有表（`SOLID`、`SHAPE`、`FACE_TEXTURES`、`FLUIDS`、
+`LIGHT_BLOCK`……）都按状态查，长度 = `STATE_COUNT`；`BLOCK_OF[状态]` 是它的方块。
+地物用字符串传状态（`minecraft:oak_log[axis=x]`，属性按名字排序，和原版存档一样），`WorldGenLevel.setBlock` 负责换成编号。
+区块和周围 8 个都生成后有一步“落定”（`worldgen/feature/settle.ts`，目前是树叶的 distance），在 Worker 的 `light` 里和光照一起做。
 
 ## 网格与材质（v1）
 

@@ -28,8 +28,9 @@ const vanilla = vanillaPack()!
 const wg = new Worldgen(onlyFeatures ? [vanilla, onlyPack(vanilla, onlyFeatures.split(','))] : [vanilla])
 wg.setSeed(42n)
 const all = new Map<string, number>()
-const blocks = new Map<string, [number, number, number]>()
+const blocks = new Map<string, [number, number, number, number]>()
 let same = 0
+let sameState = 0
 let total = 0
 for (const f of files)
   for (const line of readFileSync(f, 'utf8').split('\n')) {
@@ -39,20 +40,24 @@ for (const f of files)
     for (let x = Number(a) - 2; x < Number(a) + 2; x++) for (let z = Number(b) - 2; z < Number(b) + 2; z++) chunks.push([x, z])
     // 名字前面可以带维度：nether:xxx、end:xxx（v5.2）
     const dim = name.startsWith('nether:') ? 'minecraft:nether' : name.startsWith('end:') ? 'minecraft:end' : 'minecraft:overworld'
-    const r = diffChunks(world, wg, chunks, { dim, features: process.env.FEATURES !== '0' })
+    const r = diffChunks(world, wg, chunks, { dim, features: process.env.FEATURES !== '0', states: process.env.STATES === '1' })
     same += r.same
+    sameState += r.sameState
     total += r.total
     for (const [k, n] of r.pairs) all.set(k, (all.get(k) ?? 0) + n)
     for (const [k, v] of r.perBlock) {
-      const e = blocks.get(k) ?? [0, 0, 0]
-      blocks.set(k, [e[0] + v[0], e[1] + v[1], e[2] + v[2]])
+      const e = blocks.get(k) ?? [0, 0, 0, 0]
+      blocks.set(k, [e[0] + v[0], e[1] + v[1], e[2] + v[2], e[3] + v[3]])
     }
-    console.log(`${name.padEnd(24)} ${r.compared} 区块 ${((r.same / r.total) * 100).toFixed(3)}%  ${r.pairs.slice(0, top).map(([k, n]) => `${k}×${n}`).join('  ')}`)
+    console.log(`${name.padEnd(24)} ${r.compared} 区块 ${((r.same / r.total) * 100).toFixed(3)}% 状态 ${((r.sameState / r.total) * 100).toFixed(3)}%  ${r.pairs.slice(0, top).map(([k, n]) => `${k}×${n}`).join('  ')}`)
   }
-console.log(`\n合计 一致 ${((same / total) * 100).toFixed(4)}%`)
+console.log(`\n合计 方块一致 ${((same / total) * 100).toFixed(4)}%  状态也一致 ${((sameState / total) * 100).toFixed(4)}%`)
 for (const [k, n] of [...all].sort((x, y) => y[1] - x[1]).slice(0, 50)) console.log(String(n).padStart(8), k)
 
-// 每种方块：原版几格、我们几格、位置对上的比例（只列有差别的）
-console.log('\n方块                       原版      我们      位置一致')
-for (const [k, [v, o, m]] of [...blocks].sort((x, y) => y[1][0] - x[1][0]))
-  if (v !== m || o !== m) console.log(`${k.replace('minecraft:', '').padEnd(24)} ${String(v).padStart(8)}  ${String(o).padStart(8)}  ${v ? ((m / v) * 100).toFixed(1).padStart(6) + '%' : '     -'}`)
+// 每种方块：原版几格、我们几格、位置对上的比例、位置对上的格子里状态也对上的比例（v7；只列有差别的）
+console.log('\n方块                       原版      我们      位置一致  状态一致')
+for (const [k, [v, o, m, st]] of [...blocks].sort((x, y) => y[1][0] - x[1][0]))
+  if (v !== m || o !== m || st !== m)
+    console.log(
+      `${k.replace('minecraft:', '').padEnd(24)} ${String(v).padStart(8)}  ${String(o).padStart(8)}  ${v ? ((m / v) * 100).toFixed(1).padStart(6) + '%' : '     -'}  ${m ? ((st / m) * 100).toFixed(1).padStart(6) + '%' : '     -'}`
+    )

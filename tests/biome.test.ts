@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { BlockType, NAME_BY_BLOCK } from '../src/terrain/blocks'
+import { BlockType, NAME_BY_STATE } from '../src/terrain/blocks'
 import Section from '../src/terrain/chunk/Section'
 import { generateChunk } from '../src/terrain/worker/surface'
 import { Parameter, ParameterList, parameters, quantize, type TargetPoint } from '../src/terrain/worldgen/biome/Climate'
@@ -220,7 +220,7 @@ test('原版数据：用 surface_rule 生成的区块有草、土、沙、深板
     c.sections.forEach((d) => {
       const sec = Section.fromData(d)
       for (let i = 0; i < 4096; i++) {
-        const n = NAME_BY_BLOCK[sec.blocks.get(i) as BlockType]
+        const n = NAME_BY_STATE[sec.blocks.get(i) as BlockType]
         count.set(n, (count.get(n) ?? 0) + 1)
       }
     })

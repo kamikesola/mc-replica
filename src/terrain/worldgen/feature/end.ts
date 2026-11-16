@@ -56,7 +56,14 @@ export function endSpike(): FeaturePlacer {
       if (s.guarded)
         for (let k = -2; k <= 2; k++)
           for (let m = -2; m <= 2; m++)
-            for (let n = 0; n <= 3; n++) if (Math.abs(k) === 2 || Math.abs(m) === 2 || n === 3) l.setBlock(s.x + k, s.height + n, s.z + m, 'minecraft:iron_bars')
+            for (let n = 0; n <= 3; n++) {
+              if (!(Math.abs(k) === 2 || Math.abs(m) === 2 || n === 3)) continue
+              // v7：铁栏杆往哪边连（原版 EndSpikeFeature）
+              const b5 = k === -2 || k === 2 || n === 3
+              const b6 = m === -2 || m === 2 || n === 3
+              const bars = `minecraft:iron_bars[east=${b6 && k !== 2},north=${b5 && m !== -2},south=${b5 && m !== 2},west=${b6 && k !== -2}]`
+              l.setBlock(s.x + k, s.height + n, s.z + m, bars)
+            }
       r.nextFloat() // 末影水晶的朝向
       l.setBlock(s.x, s.height, s.z, BEDROCK)
       l.setBlock(s.x, s.height + 1, s.z, 'minecraft:fire')
@@ -98,7 +105,17 @@ export function endIsland(): FeaturePlacer {
 const HORIZONTAL: [number, number][] = [[0, -1], [1, 0], [0, 1], [-1, 0]]
 
 export function chorusPlant(): FeaturePlacer {
-  const PLANT = 'minecraft:chorus_plant'
+  /**
+   * 原版 ChorusPlantBlock.getStateWithConnections（v7）：放下时看 6 个邻居，连着紫颂植物 / 紫颂花的面是 true，
+   * 下面还连末地石。邻居后来才放的不会回头更新（原版放的时候也不更新邻居），所以放的先后顺序要和原版一样
+   */
+  const plant = (l: WorldGenLevel, x: number, y: number, z: number) => {
+    const c = (dx: number, dy: number, dz: number, end = false) => {
+      const b = l.getBlock(x + dx, y + dy, z + dz)
+      return b === 'minecraft:chorus_plant' || b === 'minecraft:chorus_flower' || (end && b === END_STONE)
+    }
+    l.setBlock(x, y, z, `minecraft:chorus_plant[down=${c(0, -1, 0, true)},east=${c(1, 0, 0)},north=${c(0, 0, -1)},south=${c(0, 0, 1)},up=${c(0, 1, 0)},west=${c(-1, 0, 0)}]`)
+  }
   const allNeighborsEmpty = (l: WorldGenLevel, x: number, y: number, z: number, except: number) => {
     for (let d = 0; d < 4; d++) if (d !== except && !isAir(l.getBlock(x + HORIZONTAL[d][0], y, z + HORIZONTAL[d][1]))) return false
     return true
@@ -109,8 +126,8 @@ export function chorusPlant(): FeaturePlacer {
     for (let j = 0; j < i; j++) {
       const py = by + j + 1
       if (!allNeighborsEmpty(l, bx, py, bz, -1)) return
-      l.setBlock(bx, py, bz, PLANT)
-      l.setBlock(bx, py - 1, bz, PLANT)
+      plant(l, bx, py, bz)
+      plant(l, bx, py - 1, bz)
     }
     let branched = false
     if (iter < 4) {
@@ -130,17 +147,17 @@ export function chorusPlant(): FeaturePlacer {
           allNeighborsEmpty(l, px, py, pz, back)
         ) {
           branched = true
-          l.setBlock(px, py, pz, PLANT)
-          l.setBlock(px + HORIZONTAL[back][0], py, pz + HORIZONTAL[back][1], PLANT)
+          plant(l, px, py, pz)
+          plant(l, px + HORIZONTAL[back][0], py, pz + HORIZONTAL[back][1])
           grow(l, r, px, py, pz, ox, oz, maxDist, iter + 1)
         }
       }
     }
-    if (!branched) l.setBlock(bx, by + i, bz, 'minecraft:chorus_flower')
+    if (!branched) l.setBlock(bx, by + i, bz, 'minecraft:chorus_flower[age=5]')
   }
   return (l, r, x, y, z) => {
     if (!isAir(l.getBlock(x, y, z)) || l.getBlock(x, y - 1, z) !== END_STONE) return false
-    l.setBlock(x, y, z, PLANT)
+    plant(l, x, y, z)
     grow(l, r, x, y, z, x, z, 8, 0)
     return true
   }

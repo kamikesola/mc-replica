@@ -1,7 +1,7 @@
 import type Control from '../../control'
 import type Core from '../../core'
 import type Terrain from '../../terrain'
-import { BLOCKS } from '../../terrain/blocks'
+import { BLOCK_OF, BLOCKS, fullStateName } from '../../terrain/blocks'
 import { CHUNK_SIZE } from '../../terrain/chunk/Chunk'
 
 /**
@@ -94,12 +94,14 @@ export default class F3 {
 
     const info = this.terrain.info
     const t = this.control.target
-    const targetName = t ? BLOCKS[this.terrain.getBlock(t.x, t.y, t.z) ?? 0].name : '—'
+    // v7：准星指着的方块连属性一起显示（原版 F3 右边的 Targeted Block）
+    const ts = t ? (this.terrain.getBlock(t.x, t.y, t.z) ?? 0) : 0
+    const targetName = t ? `${BLOCKS[BLOCK_OF[ts]].name} ${fullStateName(ts).replace('minecraft:', '')}` : '—'
     const st = this.terrain.stats
     const r = this.core.renderer.info.render
     const mb = (b: number) => (b / 1048576).toFixed(1) + ' MB'
     const lines = [
-      `mc-replica v6 (${fps} fps, 20 TPS)`,
+      `mc-replica v7 (${fps} fps, 20 TPS)`,
       `种子: ${info?.seed ?? '…'}    noise_settings: ${info?.settings ?? '…'}`,
       `区块: ${st.loaded} 已加载（${st.lit} 已点亮）, ${st.loading} 生成中, 上一个用时 ${this.terrain.lastChunkMs.toFixed(0)} ms, 光照+网格 ${this.terrain.lastLightMs.toFixed(0)} ms, 挖/放重建 ${this.terrain.lastRemeshMs.toFixed(1)} ms`,
       `方块数据: ${mb(st.bytes)}（v0 的存法要 ${mb(st.v0Bytes)}）`,

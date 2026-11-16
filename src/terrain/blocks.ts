@@ -1,4 +1,5 @@
 import { ALWAYS_WATERLOGGED } from './worldgen/feature/core'
+import { buildStates, getProp, stateName, withProps, type StateRegistry } from './states'
 import { TEXTURE_LAYER, type TextureName } from './textures/painters'
 
 /**
@@ -98,22 +99,18 @@ export function fluidBlock(kind: FluidKind.water | FluidKind.lava, amount: numbe
 
 const NO_FLUID: FluidState = { kind: FluidKind.none, amount: 0, source: false, falling: false }
 
-/** 方块 ID → 流体状态（查表） */
-export const FLUIDS: FluidState[] = Array.from({ length: 256 }, () => NO_FLUID)
+/** 方块 → 流体状态（v7 起最终用的是按状态的 FLUIDS，见文件末尾） */
+const BLOCK_FLUIDS: FluidState[] = Array.from({ length: 256 }, () => NO_FLUID)
+const WATER_SOURCE: FluidState = { kind: FluidKind.water, amount: 8, source: true, falling: false }
 for (const kind of [FluidKind.water, FluidKind.lava] as const) {
-  FLUIDS[kind === FluidKind.water ? BlockType.water : BlockType.lava] = { kind, amount: 8, source: true, falling: false }
-  for (let a = 1; a <= 7; a++) FLUIDS[FLOW_BASE[kind] + a - 1] = { kind, amount: a, source: false, falling: false }
-  FLUIDS[FLOW_BASE[kind] + 7] = { kind, amount: 8, source: false, falling: true }
+  BLOCK_FLUIDS[kind === FluidKind.water ? BlockType.water : BlockType.lava] = { kind, amount: 8, source: true, falling: false }
+  for (let a = 1; a <= 7; a++) BLOCK_FLUIDS[FLOW_BASE[kind] + a - 1] = { kind, amount: a, source: false, falling: false }
+  BLOCK_FLUIDS[FLOW_BASE[kind] + 7] = { kind, amount: 8, source: false, falling: true }
 }
 
-/** 每个方块 ID 的流体种类（0 = 不是流体），网格生成时查 */
-/** 含水的方块（v5.1）：海草、海带、珊瑚……原版里它们和水源在同一格，这里当成“水源 + 一个十字形的面” */
+/** 一直含水的方块（v5.1）：海草、海带、珊瑚……原版里它们和水源在同一格，这里当成“水源 + 一个十字形的面” */
 export const WATERLOGGED: BlockType[] = [...ALWAYS_WATERLOGGED].map((n) => BlockType[n.slice(10) as keyof typeof BlockType])
-for (const b of WATERLOGGED) FLUIDS[b] = { kind: FluidKind.water, amount: 8, source: true, falling: false }
-
-export const FLUID_KIND: Uint8Array = Uint8Array.from(FLUIDS, (f) => f.kind)
-
-export const isFluid = (b: number) => FLUID_KIND[b] !== FluidKind.none
+for (const b of WATERLOGGED) BLOCK_FLUIDS[b] = WATER_SOURCE
 
 // ---------------------------------------------------------------- 方块表
 
@@ -442,19 +439,102 @@ for (let b = 24; b <= 31; b++) NAME_BY_BLOCK[b] = 'minecraft:lava'
 /** 方块种类数（含所有流体状态） */
 export const BLOCK_COUNT = BLOCKS.length
 
-/** 调色板“直接模式”下每格的位数：ceil(log2(方块种类数))，原版约 2.6 万种状态 → 15 位 */
-export const BLOCK_BITS = Math.ceil(Math.log2(BLOCK_COUNT))
+// ---------------------------------------------------------------- 方块状态（v7，见 states.ts）
+
+/** 名字里固定的属性：流动的水 / 岩浆的 level（原版：源 0，流动 8 − 量，下落 8），一直含水的方块 waterlogged=true */
+function fixedProps(b: number): Record<string, string> {
+  const f = BLOCK_FLUIDS[b]
+  if ((b >= 16 && b <= 31) || b === BlockType.water || b === BlockType.lava) return { level: String(f.source ? 0 : f.falling ? 8 : 8 - f.amount) }
+  if (WATERLOGGED.includes(b)) return { waterlogged: 'true' }
+  return {}
+}
+
+export const STATES: StateRegistry = buildStates(
+  Array.from({ length: BLOCK_COUNT }, (_, b) => NAME_BY_BLOCK[b]),
+  fixedProps
+)
+/** 状态总数（v7）。每一格存的是状态编号；方块 b 的默认状态编号就是 b */
+export const STATE_COUNT = STATES.count
+/** 状态 → 方块 */
+export const BLOCK_OF = STATES.blockOf
+/** 调色板“直接模式”下每格的位数：ceil(log2(状态数))，原版约 2.7 万种状态 → 15 位 */
+export const STATE_BITS = Math.ceil(Math.log2(STATE_COUNT))
+/** 方块 + 属性 → 状态 */
+export const stateOf = (b: number, props?: Record<string, string | number | boolean>) => (props ? withProps(STATES, b, props) : b)
+/** 改状态的属性 */
+export const withState = (s: number, props: Record<string, string | number | boolean>) => withProps(STATES, s, props)
+/** 状态的一个属性 */
+export const propOf = (s: number, name: string) => getProp(STATES, s, name)
+export const propOfStateId = propOf
+/** 状态的完整名字（原版存档的写法） */
+export const fullStateName = (s: number) => stateName(STATES, s)
+/** 状态 → 方块名（不带属性） */
+export const NAME_BY_STATE: string[] = Array.from({ length: STATE_COUNT }, (_, s) => NAME_BY_BLOCK[BLOCK_OF[s]])
+
+/** "minecraft:oak_log[axis=x]" 或 "minecraft:oak_log" → 状态；不认识的方块返回 undefined */
+export function parseState(str: string): number | undefined {
+  const i = str.indexOf('[')
+  const b = BLOCK_BY_NAME[i < 0 ? str : str.slice(0, i)]
+  if (b === undefined) return undefined
+  if (i < 0) return b
+  const props: Record<string, string> = {}
+  for (const kv of str.slice(i + 1, -1).split(',')) {
+    const [k, v] = kv.split('=')
+    if (k) props[k] = v
+  }
+  // 水、岩浆的 level：换成流动的“方块”（源 0，流动 1..7 = 量 8 − level，≥ 8 下落）
+  if ((b === BlockType.water || b === BlockType.lava) && props.level !== undefined) {
+    const level = Number(props.level)
+    const kind = b === BlockType.water ? FluidKind.water : FluidKind.lava
+    return level === 0 ? b : level >= 8 ? fluidBlock(kind, 8, true) : fluidBlock(kind, 8 - level)
+  }
+  return withProps(STATES, b, props)
+}
 
 /**
- * 每种方块 6 个面的纹理层号，网格生成时直接查表。
+ * 多面方块（藤蔓、发光地衣、幽匿脉络）每个状态贴着哪几面（v7），按网格的面顺序：-x, +x, -y, +y, -z, +z
+ * （属性 west, east, down, up, north, south）
+ */
+export const FACE_MASK: Uint8Array = Uint8Array.from({ length: STATE_COUNT }, (_, s) =>
+  ['west', 'east', 'down', 'up', 'north', 'south'].reduce((m, p, i) => (getProp(STATES, s, p) === 'true' ? m | (1 << i) : m), 0)
+)
+
+/** 按方块的表扩展成按状态的表 */
+function perState(table: ArrayLike<number>): Uint8Array {
+  return Uint8Array.from({ length: STATE_COUNT }, (_, s) => table[BLOCK_OF[s]])
+}
+
+/** 状态 → 流体状态（v7：waterlogged=true 的状态是水源） */
+export const FLUIDS: FluidState[] = Array.from({ length: STATE_COUNT }, (_, s) => (getProp(STATES, s, 'waterlogged') === 'true' ? WATER_SOURCE : BLOCK_FLUIDS[BLOCK_OF[s]]))
+
+/** 每个状态的流体种类（0 = 不是流体），网格生成时查 */
+export const FLUID_KIND: Uint8Array = Uint8Array.from(FLUIDS, (f) => f.kind)
+
+export const isFluid = (b: number) => FLUID_KIND[b] !== FluidKind.none
+
+/**
+ * 每个状态 6 个面的纹理层号，网格生成时直接查表。
  * 面的顺序：-x, +x, -y, +y, -z, +z（和 mesh/mesher.ts 的 FACE_DIRS 一致）
  */
 export const FACE_TEXTURES: Uint8Array = (() => {
-  const t = new Uint8Array(BLOCK_COUNT * 6)
-  for (let b = 0; b < BLOCK_COUNT; b++) {
-    const { top, side, bottom } = BLOCKS[b].textures
-    const layers = [side, side, bottom, top, side, side].map((n) => TEXTURE_LAYER[n])
-    t.set(layers, b * 6)
+  const t = new Uint8Array(STATE_COUNT * 6)
+  const MUSHROOM_FACES = ['west', 'east', 'down', 'up', 'north', 'south']
+  for (let s = 0; s < STATE_COUNT; s++) {
+    const { top, side, bottom } = BLOCKS[BLOCK_OF[s]].textures
+    let faces: TextureName[] = [side, side, bottom, top, side, side]
+    const p = (k: string) => getProp(STATES, s, k)
+    // v7：按状态换纹理
+    const axis = p('axis')
+    if (axis === 'x') faces = [top, top, side, side, side, side] // 横着的原木：两头是年轮
+    else if (axis === 'z') faces = [side, side, side, side, top, top]
+    if (p('snowy') === 'true') faces = [faces[0], faces[1], faces[2], faces[3], faces[4], faces[5]].map((f, i) => (i === 2 || i === 3 ? f : 'grass_snow_side')) as TextureName[]
+    if (/_mushroom_block$|mushroom_stem$/.test(NAME_BY_BLOCK[BLOCK_OF[s]] ?? '')) faces = faces.map((f, i) => (p(MUSHROOM_FACES[i]) === 'false' ? 'mushroom_block_inside' : f))
+    if (p('berries') === 'true') faces = faces.map((f) => (f === 'cave_vines' ? 'cave_vines_lit' : f === 'cave_vines_plant' ? 'cave_vines_plant_lit' : f))
+    if (p('half') === 'lower' && /sunflower|lilac|rose_bush|peony/.test(NAME_BY_BLOCK[BLOCK_OF[s]] ?? '')) faces = faces.map(() => 'tall_flower_bottom')
+    t.set(
+      faces.map((n) => TEXTURE_LAYER[n]),
+      s * 6
+    )
   }
   return t
 })()
@@ -473,15 +553,20 @@ export const HOTBAR: BlockType[] = [
 ]
 
 /** 实心表：SOLID[b] = 1 表示实心。网格生成时每个方块都要查好几次，用数组比查对象快 */
-export const SOLID: Uint8Array = Uint8Array.from({ length: 256 }, (_, b) => (BLOCKS[b]?.solid ? 1 : 0))
+export const SOLID: Uint8Array = perState(Uint8Array.from({ length: 256 }, (_, b) => (BLOCKS[b]?.solid ? 1 : 0)))
 
 export const isSolid = (b: number) => SOLID[b] === 1
 
 /** 形状（v5）：0 完整方块，1 slab（雪层、地毯），2 十字（藤蔓等） */
 for (const b of [BlockType.vine, BlockType.glow_lichen, BlockType.sculk_vein]) BLOCKS[b].shape = 'multiface'
-export const SHAPE: Uint8Array = Uint8Array.from({ length: 256 }, (_, b) => {
-  const s = BLOCKS[b]?.shape
-  return s === 'slab' ? 1 : s === 'cross' ? 2 : s === 'multiface' ? 3 : s === 'none' ? 4 : 0
-})
+export const SHAPE: Uint8Array = perState(
+  Uint8Array.from({ length: 256 }, (_, b) => {
+    const s = BLOCKS[b]?.shape
+    return s === 'slab' ? 1 : s === 'cross' ? 2 : s === 'multiface' ? 3 : s === 'none' ? 4 : 0
+  })
+)
 /** slab 的高度（1/16 格） */
-export const SHAPE_HEIGHT: Uint8Array = Uint8Array.from({ length: 256 }, (_, b) => BLOCKS[b]?.height ?? 16)
+export const SHAPE_HEIGHT: Uint8Array = Uint8Array.from(perState(Uint8Array.from({ length: 256 }, (_, b) => BLOCKS[b]?.height ?? 16)), (h, s) => {
+  const layers = getProp(STATES, s, 'layers') // v7：雪层的厚度
+  return layers ? Number(layers) * 2 : h
+})

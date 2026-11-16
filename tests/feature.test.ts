@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { NAME_BY_BLOCK } from '../src/terrain/blocks'
+import { NAME_BY_STATE } from '../src/terrain/blocks'
 import { chunkSource } from '../src/terrain/worker/surface'
 import { buildFeaturesPerStep } from '../src/terrain/worldgen/feature/decorate'
 import { heightProvider, intProvider } from '../src/terrain/worldgen/feature/core'
@@ -96,7 +96,7 @@ function compare(kind: string, pack: PackInput | null) {
     const ours = pack ? src.withDecorations(cx, cz) : src.proto(cx, cz).blocks
     const got: Record<string, number[]> = {}
     ours.forEach((id, i) => {
-      const n = NAME_BY_BLOCK[id].replace('minecraft:', '')
+      const n = NAME_BY_STATE[id].replace('minecraft:', '')
       if (names.has(n)) (got[n] ??= []).push(i)
     })
     // 原版这个区块里没有的那类方块，我们也不能有
@@ -133,7 +133,7 @@ test('原版数据：完整的装饰会放下矿石、树和积雪', { skip, tim
     [-1, -1],
     [309, -31]
   ]) {
-    for (const id of src.withDecorations(cx, cz)) count.set(NAME_BY_BLOCK[id], (count.get(NAME_BY_BLOCK[id]) ?? 0) + 1)
+    for (const id of src.withDecorations(cx, cz)) count.set(NAME_BY_STATE[id], (count.get(NAME_BY_STATE[id]) ?? 0) + 1)
   }
   for (const b of ['coal_ore', 'iron_ore', 'dark_oak_log', 'dark_oak_leaves', 'spruce_log', 'snow']) assert.ok((count.get('minecraft:' + b) ?? 0) > 0, b)
 })
@@ -157,7 +157,7 @@ test('v5.1 / v5.2 地物和原版完整存档逐格一致（晶洞、地牢、�
       const [cx, cz] = key.replace(/^[a-z]+:/, '').split(',').map(Number)
       const got: Record<string, number[]> = {}
       src.withDecorations(cx, cz).forEach((id, i) => {
-        const n = NAME_BY_BLOCK[id]
+        const n = NAME_BY_STATE[id]
         if (re.test(n)) (got[n] ??= []).push(i)
       })
       assert.deepEqual(got, byName, `${cat} 区块 ${key}`)

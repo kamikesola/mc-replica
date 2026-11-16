@@ -11,5 +11,7 @@ export const TAGS: Record<string, Set<string>> = Object.fromEntries(
 /** 方块是否在标签里；不认识的标签当成空的 */
 export function inTag(block: string, tag: string): boolean {
   const t = TAGS[tag.startsWith('#') ? tag.slice(1) : tag.includes(':') ? tag : `minecraft:${tag}`]
-  return t ? t.has(block) : false
+  if (!t) return false
+  const i = block.indexOf('[') // v7：带属性的状态也按方块名查
+  return t.has(i < 0 ? block : block.slice(0, i))
 }

@@ -8,7 +8,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { inflateSync } from 'node:zlib'
-import { BlockType } from '../src/terrain/blocks'
+import { BlockType, stateOf } from '../src/terrain/blocks'
 import { LIGHT_BLOCK, LIGHT_EMISSION, lightChunk, lightRegion, LP } from '../src/terrain/light/LightEngine'
 import { updateLight, type LightWorld } from '../src/terrain/light/LightUpdater'
 import { meshSection, N, nIndex } from '../src/terrain/mesh/mesher'
@@ -30,7 +30,13 @@ test('光照属性表（从原版 jar 导出）：石头挡光、水和树叶减
   assert.equal(LIGHT_BLOCK[BlockType.short_grass], 0)
   assert.equal(LIGHT_EMISSION[BlockType.glowstone], 15)
   assert.equal(LIGHT_EMISSION[BlockType.lava], 15)
-  assert.equal(LIGHT_EMISSION[BlockType.glow_lichen], 7)
+  // v7 起按状态：没有面的发光地衣（默认状态）不发光，有面的 7；洞穴藤蔓有浆果才发光；海泡菜越多越亮
+  assert.equal(LIGHT_EMISSION[BlockType.glow_lichen], 0)
+  assert.equal(LIGHT_EMISSION[stateOf(BlockType.glow_lichen, { down: true })], 7)
+  assert.equal(LIGHT_EMISSION[BlockType.cave_vines], 0)
+  assert.equal(LIGHT_EMISSION[stateOf(BlockType.cave_vines, { berries: true })], 14)
+  assert.equal(LIGHT_EMISSION[stateOf(BlockType.sea_pickle, { pickles: 4 })], 15)
+  assert.equal(LIGHT_BLOCK[stateOf(BlockType.leaves, { waterlogged: true })], 1)
   assert.equal(LIGHT_EMISSION[BlockType.magma_block], 3)
 })
 
@@ -38,7 +44,7 @@ test('光照属性表（从原版 jar 导出）：石头挡光、水和树叶减
 
 /** W×D×H 的小世界，下标 (y * D + z) * W + x */
 function box(W: number, D: number, H: number, fill: BlockType) {
-  const g = new Uint8Array(W * D * H).fill(fill)
+  const g = new Uint16Array(W * D * H).fill(fill)
   return { g, at: (x: number, y: number, z: number) => (y * D + z) * W + x }
 }
 
@@ -140,7 +146,7 @@ test('增量更新：随机挖放 300 次，每次都和重新整块计算的结
 // ---------------------------------------------------------------- 平滑光照
 
 test('平滑光照：贴墙的地面，靠墙的两个角暗、远离墙的两个角亮', () => {
-  const blocks = new Uint8Array(N * N * N)
+  const blocks = new Uint16Array(N * N * N)
   const light = new Uint8Array(N * N * N).fill(15)
   for (let x = -1; x <= 16; x++) for (let z = -1; z <= 16; z++) blocks[nIndex(x, 0, z)] = BlockType.stone
   // 一面墙（x = 5，y = 1..3），墙里亮度 0
@@ -176,7 +182,7 @@ test('和原版对照：bare 存档里的天空光、方块光逐格一致（主
   for (const f of fixture) {
     const s = wg.getSettings(f.dim)
     const src = chunkSource(wg, f.dim, s)
-    const nine: Uint8Array[] = []
+    const nine: Uint16Array[] = []
     for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) nine.push(src.proto(f.cx + dx, f.cz + dz).blocks)
     const ours = lightChunk(nine, s.height, f.dim === 'minecraft:overworld')
     const theirs = inflateSync(Buffer.from(f.light, 'base64'))

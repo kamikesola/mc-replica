@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js'
 import Player, { PHYSICS } from '../player'
 import type Terrain from '../terrain'
-import { BLOCKS, BlockType, HOTBAR, isFluid, isSolid } from '../terrain/blocks'
+import { BLOCK_OF, BLOCKS, BlockType, HOTBAR, isFluid, isSolid, propOf, stateOf } from '../terrain/blocks'
 import { tickPlayer, type MoveInput, type MoveWorld } from './movement'
 import { collides, EMPTY, FULL_CUBE, type Vec3 } from './physics'
 import { raycast, type RayHit } from './raycast'
@@ -184,7 +184,7 @@ export default class Control {
   breakBlock = () => {
     const t = this.target!
     const type = this.terrain.getBlock(t.x, t.y, t.z)
-    if (type === null || !BLOCKS[type].breakable) return
+    if (type === null || !BLOCKS[BLOCK_OF[type]].breakable) return
     this.terrain.setBlock(t.x, t.y, t.z, BlockType.air)
   }
 
@@ -198,7 +198,10 @@ export default class Control {
     // 不能把方块放进自己身体里
     const b = this.player.body
     if (collides(this.player.pos, b.width, b.height, (bx, by, bz) => (bx === x && by === y && bz === z ? FULL_CUBE : EMPTY))) return
-    this.terrain.setBlock(x, y, z, HOTBAR[this.slot])
+    // v7：原木按点的那一面朝向（原版 RotatedPillarBlock.getStateForPlacement：axis = 点击面的轴）
+    const block = HOTBAR[this.slot]
+    const axis = t.nx !== 0 ? 'x' : t.ny !== 0 ? 'y' : 'z'
+    this.terrain.setBlock(x, y, z, propOf(block, 'axis') !== undefined ? stateOf(block, { axis }) : block)
   }
 
   // ---------------------------------------------------------------- 出生点

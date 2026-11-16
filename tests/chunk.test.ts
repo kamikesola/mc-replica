@@ -3,7 +3,7 @@
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { BLOCK_BITS, BlockType, FACE_TEXTURES } from '../src/terrain/blocks'
+import { STATE_BITS, BlockType, FACE_TEXTURES } from '../src/terrain/blocks'
 import BitStorage from '../src/terrain/chunk/BitStorage'
 import Chunk from '../src/terrain/chunk/Chunk'
 import PalettedContainer from '../src/terrain/chunk/PalettedContainer'
@@ -58,13 +58,13 @@ test('调色板：单值 → 4 位 → 5 位 → 直接模式，数据始终正�
 test('调色板：fromValues 一次选出最小位数；toData / fromData 往返不变', () => {
   const r = rand(3)
   const values = Uint8Array.from({ length: 4096 }, () => (r() < 0.9 ? BlockType.stone : BlockType.dirt))
-  const c = PalettedContainer.fromValues(values, BLOCK_BITS)
+  const c = PalettedContainer.fromValues(values, STATE_BITS)
   assert.equal(c.bits, 4)
   assert.equal(c.byteSize, 2048 + 2)
-  const d = PalettedContainer.fromData(c.toData(), BLOCK_BITS)
+  const d = PalettedContainer.fromData(c.toData(), STATE_BITS)
   for (let i = 0; i < 4096; i++) assert.equal(d.get(i), values[i])
 
-  const air = PalettedContainer.fromValues(new Uint8Array(4096), BLOCK_BITS)
+  const air = PalettedContainer.fromValues(new Uint8Array(4096), STATE_BITS)
   assert.ok(air.isSingle)
   assert.equal(air.byteSize, 1)
 })
@@ -93,7 +93,7 @@ test('Section 统计非空气方块数；Chunk 跨 section 读写', () => {
 
 // ---------------------------------------------------------------- 网格
 
-const hood = () => new Uint8Array(N * N * N)
+const hood = () => new Uint16Array(N * N * N)
 const quads = (m: SectionMesh) => m.indices.length / 6
 
 test('贪婪网格：一整层平地只要 1 个四边形，逐面要 256 个', () => {

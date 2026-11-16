@@ -25,8 +25,14 @@ export interface WorldGenLevel {
   readonly seed: bigint
   /** 有没有天空光（v5.2：下界、末地没有，蘑菇在那里总是“暗处”） */
   readonly hasSkyLight?: boolean
+  /** 方块名（不带属性） */
   getBlock(x: number, y: number, z: number): string
-  /** 写方块；超出可写范围（3×3 区块以外、世界上下界以外）时什么也不做，返回 false */
+  /** 完整的方块状态（v7）：minecraft:oak_log[axis=x]，属性按名字排序 */
+  getState(x: number, y: number, z: number): string
+  /**
+   * 写方块；超出可写范围（3×3 区块以外、世界上下界以外）时什么也不做，返回 false。
+   * state 可以带属性（v7）：minecraft:oak_log[axis=x]；没写的属性取默认值
+   */
   setBlock(x: number, y: number, z: number, state: string): boolean
   /** 原版 WorldGenRegion.getHeight：这一列“第一个空位”的 y（= 最高的方块 + 1） */
   getHeight(type: HeightmapType, x: number, z: number): number
@@ -42,9 +48,15 @@ export const isOutsideBuildHeight = (level: WorldGenLevel, y: number) => y < lev
 
 // ---------------------------------------------------------------- 方块的物理性质（按名字）
 
+/** 去掉属性（v7：地物里传来传去的方块可能带属性，判断性质时只看方块名） */
+const nm = (b: string) => {
+  const i = b.indexOf('[')
+  return i < 0 ? b : b.slice(0, i)
+}
+
 const AIR = new Set(['minecraft:air', 'minecraft:cave_air', 'minecraft:void_air'])
-export const isAir = (b: string) => AIR.has(b)
-export const isWater = (b: string) => b === 'minecraft:water'
+export const isAir = (b: string) => AIR.has(nm(b))
+export const isWater = (b: string) => nm(b) === 'minecraft:water'
 
 /** 不是“实心”的（原版 legacySolid：碰撞箱为空，或者包围盒平均边长 < 0.73 且不满一格高）：植物、地毯、藤蔓…… */
 const NON_SOLID = new Set(
@@ -63,7 +75,7 @@ const NON_SOLID = new Set(
 )
 
 /** 原版 BlockState.blocksMotion（旧的“实心”）：挡住移动。雪层原版标了 forceSolidOn，算实心 */
-export const blocksMotion = (b: string) => !isAir(b) && !NON_SOLID.has(b)
+export const blocksMotion = (b: string) => !isAir(b) && !NON_SOLID.has(nm(b))
 
 /** 实心、但不是完整的方块（上表面不满）：雪层、仙人掌、箱子、竹子、滴水石锥、台阶…… */
 const PARTIAL = new Set(
@@ -71,16 +83,16 @@ const PARTIAL = new Set(
 )
 
 /** 原版 isFaceFull(碰撞箱, UP)：上表面是不是完整的（雪层能不能放在上面）。树叶的碰撞箱是满的 */
-export const hasFullTopFace = (b: string) => (blocksMotion(b) && !PARTIAL.has(b))
+export const hasFullTopFace = (b: string) => blocksMotion(b) && !PARTIAL.has(nm(b))
 
 /**
  * 原版 isFaceSturdy / isFaceFull(支撑形状)：这一面能不能“撑住”东西（海草、发光地衣、藤蔓……）。
  * 树叶的支撑形状是空的，所以不算。这里不区分方向（我们没有台阶朝向、楼梯……）
  */
-export const isSturdy = (b: string) => blocksMotion(b) && !PARTIAL.has(b) && !isLeaves(b)
+export const isSturdy = (b: string) => blocksMotion(b) && !PARTIAL.has(nm(b)) && !isLeaves(b)
 
 /** 原版 isSolidRender：不透光的完整方块（蘑菇要长在上面） */
-export const isSolidRender = (b: string) => isSturdy(b) && !inTag(b, 'minecraft:ice') && b !== 'minecraft:glass' && b !== 'minecraft:mangrove_roots'
+export const isSolidRender = (b: string) => isSturdy(b) && !inTag(b, 'minecraft:ice') && nm(b) !== 'minecraft:glass' && nm(b) !== 'minecraft:mangrove_roots'
 
 /** 一直“含水”的方块（海草、海带、珊瑚……）：原版里它们和水源在同一格 */
 export const ALWAYS_WATERLOGGED = new Set(
@@ -88,9 +100,9 @@ export const ALWAYS_WATERLOGGED = new Set(
 )
 
 /** 原版 getFluidState：这一格有没有水（水方块或者含水的方块） */
-export const hasWater = (b: string) => b === 'minecraft:water' || ALWAYS_WATERLOGGED.has(b)
+export const hasWater = (b: string) => nm(b) === 'minecraft:water' || ALWAYS_WATERLOGGED.has(nm(b)) || b.includes('waterlogged=true')
 /** 原版 BlockState.liquid()：是流体方块本身（不含“含水”） */
-export const isLiquid = (b: string) => b === 'minecraft:water' || b === 'minecraft:lava'
+export const isLiquid = (b: string) => nm(b) === 'minecraft:water' || nm(b) === 'minecraft:lava'
 
 export const isLeaves = (b: string) => inTag(b, 'minecraft:leaves')
 
@@ -103,10 +115,42 @@ export const blockName = (state: string) => {
   return i < 0 ? state : state.slice(0, i)
 }
 
-/** JSON 里的方块状态 {Name, Properties} → 名字 */
+/**
+ * JSON 里的方块状态 {Name, Properties} → 字符串。
+ * v7 起带上属性（按名字排序，和原版存档的写法一样）：minecraft:cave_vines[age=0,berries=true]
+ */
 export function parseState(json: unknown): string {
-  const o = json as { Name: string }
-  return o.Name.includes(':') ? o.Name : `minecraft:${o.Name}`
+  const o = json as { Name: string; Properties?: Record<string, string> }
+  const name = o.Name.includes(':') ? o.Name : `minecraft:${o.Name}`
+  const p = o.Properties
+  if (!p || !Object.keys(p).length) return name
+  return `${name}[${Object.keys(p)
+    .sort()
+    .map((k) => `${k}=${p[k]}`)
+    .join(',')}]`
+}
+
+/** 改状态字符串里的属性（v7）：withProp('minecraft:oak_log', 'axis', 'x') → 'minecraft:oak_log[axis=x]' */
+export function withProp(state: string, prop: string, value: string | number | boolean): string {
+  const name = nm(state)
+  const props: Record<string, string> = {}
+  const i = state.indexOf('[')
+  if (i >= 0)
+    for (const kv of state.slice(i + 1, -1).split(',')) {
+      const [k, v] = kv.split('=')
+      props[k] = v
+    }
+  props[prop] = String(value)
+  return `${name}[${Object.keys(props)
+    .sort()
+    .map((k) => `${k}=${props[k]}`)
+    .join(',')}]`
+}
+
+/** 状态字符串里的一个属性（v7） */
+export function propOfState(state: string, prop: string): string | undefined {
+  const m = state.match(new RegExp(`[\\[,]${prop}=([^,\\]]+)`))
+  return m?.[1]
 }
 
 // ---------------------------------------------------------------- 数值提供者
@@ -291,18 +335,16 @@ export function stateProvider(json: unknown): StateProvider {
       }
     }
     case 'randomized_int_state_provider': {
-      // 先取来源方块，再随机一个整数属性（比如红树胎生苗的 age）；属性我们不存，但随机数要照样消耗
+      // 先取来源方块，再随机一个整数属性（比如红树胎生苗的 age、洞穴藤蔓的 age）。v7 起属性真的写进去
       const src = stateProvider(o.source)
       const values = intProvider(o.values)
-      return (r, x, y, z) => {
-        const s = src(r, x, y, z)
-        values(r)
-        return s
-      }
+      const prop = String(o.property)
+      return (r, x, y, z) => withProp(src(r, x, y, z), prop, values(r))
     }
     case 'rotated_block_provider': {
+      // 原版 RotatedBlockProvider：随机一个轴（Direction.Axis.getRandom = nextInt(3)，顺序 x、y、z）
       const s = parseState(o.state)
-      return () => s
+      return (r) => withProp(s, 'axis', 'xyz'[r.nextInt(3)])
     }
     case 'noise_provider':
     case 'noise_threshold_provider':
@@ -394,7 +436,7 @@ export type BlockPredicate = (level: WorldGenLevel, x: number, y: number, z: num
 const HORIZONTAL: [number, number][] = [[0, -1], [0, 1], [-1, 0], [1, 0]]
 const DOUBLE_PLANTS = new Set(['tall_grass', 'large_fern', 'sunflower', 'lilac', 'rose_bush', 'peony', 'small_dripleaf', 'tall_seagrass'].map((n) => `minecraft:${n}`))
 /** 两格高的植物（原版 DoublePlantBlock）：放的时候上面一格也要放 */
-export const isDoublePlant = (b: string) => DOUBLE_PLANTS.has(b)
+export const isDoublePlant = (b: string) => DOUBLE_PLANTS.has(nm(b))
 
 /**
  * 生成阶段蘑菇处的亮度算不算“暗”（< 13）。原版这时光照还没算完，取到的值和区块生成的先后有关；
@@ -410,7 +452,7 @@ const isDirtOrFarmland = (b: string) => inTag(b, 'minecraft:dirt') || b === 'min
  */
 export function canSurvive(state: string, level: WorldGenLevel, x: number, y: number, z: number): boolean {
   const below = level.getBlock(x, y - 1, z)
-  const n = state.slice(10) // 去掉 "minecraft:"
+  const n = nm(state).slice(10) // 去掉 "minecraft:" 和属性
   if (n.endsWith('_sapling')) return isDirtOrFarmland(below)
   switch (n) {
     case 'mangrove_propagule':

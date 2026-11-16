@@ -1,4 +1,4 @@
-import { BLOCK_BITS, BlockType } from '../blocks'
+import { STATE_BITS, BlockType } from '../blocks'
 import PalettedContainer, { type PalettedData } from './PalettedContainer'
 
 /**
@@ -15,7 +15,7 @@ export default class Section {
   /** 非空气方块的数量。为 0 时整段可以直接跳过（原版的 nonEmptyBlockCount） */
   nonAir = 0
 
-  constructor(public blocks: PalettedContainer = new PalettedContainer(BLOCK_BITS, BlockType.air)) {
+  constructor(public blocks: PalettedContainer = new PalettedContainer(STATE_BITS, BlockType.air)) {
     this.recount()
   }
 
@@ -49,6 +49,6 @@ export default class Section {
   }
 
   static fromData(d: PalettedData): Section {
-    return new Section(PalettedContainer.fromData(d, BLOCK_BITS))
+    return new Section(PalettedContainer.fromData(d, STATE_BITS))
   }
 }

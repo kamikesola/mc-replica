@@ -9,7 +9,7 @@
  * 每一步消耗随机数的顺序都和原版一致，所以同一个种子长出来的树和原版逐格相同。
  * 装饰器遍历原木 / 树叶的顺序来自 Java 的 HashSet（再按 y 稳定排序），这里用 javaHashOrder 模拟。
  */
-import { blockName, floatProvider, intProvider, isAir, isLeaves, isOutsideBuildHeight, parseState, stateProvider, type IntProvider, type StateProvider, type WorldGenLevel } from './core'
+import { floatProvider, propOfState, withProp, intProvider, isAir, isLeaves, isOutsideBuildHeight, parseState, stateProvider, type IntProvider, type StateProvider, type WorldGenLevel } from './core'
 import { inTag } from './tags'
 import type { FeaturePlacer } from './placement'
 import { cos, sin } from '../math/Mth'
@@ -30,6 +30,8 @@ const HORIZONTAL: Pos[] = [
   [-1, 0, 0]
 ]
 const randomDirection = (r: RandomSource) => HORIZONTAL[r.nextInt(4)]
+/** 水平方向的名字（方块状态的 facing） */
+const dirName = (d: Pos) => (d[2] < 0 ? 'north' : d[2] > 0 ? 'south' : d[0] > 0 ? 'east' : 'west')
 const opposite = (d: Pos): Pos => [-d[0], -d[1], -d[2]]
 /** 顺时针（从上往下看）：北 → 东 → 南 → 西 */
 const clockWise = (d: Pos): Pos => HORIZONTAL[(HORIZONTAL.findIndex((h) => h[0] === d[0] && h[2] === d[2]) + 1) & 3]
@@ -139,9 +141,11 @@ function trunkPlacer(json: Record<string, unknown>): TrunkPlacer {
     valid = (l, x, y, z) => validTreePos(l, x, y, z) || inTag(l.getBlock(x, y, z), tag)
   }
   const isFree = (l: WorldGenLevel, x: number, y: number, z: number) => valid(l, x, y, z) || inTag(l.getBlock(x, y, z), 'minecraft:logs')
-  const placeLog = (t: TreeContext, x: number, y: number, z: number) => {
+  /** axis（v7）：横着的树枝要设原木的朝向（原版 placeLog 的 propertySetter，trySetValue(AXIS, …)） */
+  const placeLog = (t: TreeContext, x: number, y: number, z: number, axis?: 'x' | 'y' | 'z') => {
     if (!valid(t.level, x, y, z)) return false
-    t.setLog(x, y, z, t.cfg.trunk(t.r, x, y, z))
+    const s = t.cfg.trunk(t.r, x, y, z)
+    t.setLog(x, y, z, axis && /_(log|wood|stem|hyphae)(\[|$)/.test(s) ? withProp(s, 'axis', axis) : s)
     return true
   }
   const placeLogIfFree = (t: TreeContext, x: number, y: number, z: number) => {
@@ -376,10 +380,11 @@ function trunkPlacer(json: Record<string, unknown>): TrunkPlacer {
           const ty = y + i2
           const tz = z + d[2] * j2
           const k2 = bl2 ? 2 : 1
+          const ax = d[0] !== 0 ? 'x' : 'z'
           for (let q = 0; q < k2; q++) {
             mx += d[0]
             mz += d[2]
-            placeLog(t, mx, my, mz)
+            placeLog(t, mx, my, mz, ax)
           }
           const up = ty > my ? 1 : -1
           for (;;) {
@@ -392,7 +397,7 @@ function trunkPlacer(json: Record<string, unknown>): TrunkPlacer {
               mx += d[0]
               mz += d[2]
             }
-            placeLog(t, mx, my, mz)
+            placeLog(t, mx, my, mz, vertical ? undefined : ax)
           }
           return att(tx, ty + 1, tz)
         }
@@ -421,7 +426,7 @@ function fancyTrunk(
   x: number,
   y: number,
   z: number,
-  placeLog: (t: TreeContext, x: number, y: number, z: number) => boolean,
+  placeLog: (t: TreeContext, x: number, y: number, z: number, axis?: 'x' | 'y' | 'z') => boolean,
   isFree: (l: WorldGenLevel, x: number, y: number, z: number) => boolean
 ): Attachment[] {
   const r = t.r
@@ -448,7 +453,10 @@ function fancyTrunk(
       const py = s[1] + jfloor(f32(0.5 + f32(j * fy)))
       const pz = s[2] + jfloor(f32(0.5 + f32(j * fz)))
       if (place) {
-        placeLog(t, px, py, pz) // 原版还会按方向设置原木的 axis（横着的树枝），我们的原木没有朝向
+        // 原木的朝向（v7，原版 getLogAxis）：相对树枝起点，水平偏移大的那个轴；没有水平偏移是 y
+        const ax = Math.abs(px - s[0])
+        const az = Math.abs(pz - s[2])
+        placeLog(t, px, py, pz, Math.max(ax, az) > 0 ? (ax === Math.max(ax, az) ? 'x' : 'z') : 'y')
         continue
       }
       if (!isFree(t.level, px, py, pz)) return false
@@ -832,7 +840,7 @@ function decorator(json: Record<string, unknown>, features: { place: (id: string
         shuffle(cand, r)
         const pos = cand.find((q) => c.isAir(...q) && c.isAir(q[0], q[1], q[2] + 1))
         if (!pos) return
-        c.set(...pos, 'minecraft:bee_nest')
+        c.set(...pos, 'minecraft:bee_nest[facing=south]') // 原版 BeehiveDecorator.WORLDGEN_FACING
         // 原版接着给蜂巢放 2~3 只蜜蜂，每只消耗一次随机数（只影响后面的随机数顺序）
         const n = 2 + r.nextInt(2)
         for (let k = 0; k < n; k++) r.nextInt(599)
@@ -842,29 +850,31 @@ function decorator(json: Record<string, unknown>, features: { place: (id: string
       return (c) => {
         const r = c.r
         for (const [x, y, z] of c.logs) {
-          if (r.nextInt(3) > 0 && c.isAir(x - 1, y, z)) c.set(x - 1, y, z, 'minecraft:vine')
-          if (r.nextInt(3) > 0 && c.isAir(x + 1, y, z)) c.set(x + 1, y, z, 'minecraft:vine')
-          if (r.nextInt(3) > 0 && c.isAir(x, y, z - 1)) c.set(x, y, z - 1, 'minecraft:vine')
-          if (r.nextInt(3) > 0 && c.isAir(x, y, z + 1)) c.set(x, y, z + 1, 'minecraft:vine')
+          // 藤蔓贴在朝着原木的那一面（v7：原版 placeVine(pos.west(), VineBlock.EAST)……）
+          if (r.nextInt(3) > 0 && c.isAir(x - 1, y, z)) c.set(x - 1, y, z, 'minecraft:vine[east=true]')
+          if (r.nextInt(3) > 0 && c.isAir(x + 1, y, z)) c.set(x + 1, y, z, 'minecraft:vine[west=true]')
+          if (r.nextInt(3) > 0 && c.isAir(x, y, z - 1)) c.set(x, y, z - 1, 'minecraft:vine[south=true]')
+          if (r.nextInt(3) > 0 && c.isAir(x, y, z + 1)) c.set(x, y, z + 1, 'minecraft:vine[north=true]')
         }
       }
     case 'leave_vine': {
       const p = f32(json.probability as number)
-      const hang = (c: DecoratorContext, x: number, y: number, z: number) => {
-        c.set(x, y, z, 'minecraft:vine')
+      const hang = (c: DecoratorContext, x: number, y: number, z: number, face: string) => {
+        const vine = `minecraft:vine[${face}=true]`
+        c.set(x, y, z, vine)
         y--
         for (let i = 4; c.isAir(x, y, z) && i > 0; i--) {
-          c.set(x, y, z, 'minecraft:vine')
+          c.set(x, y, z, vine)
           y--
         }
       }
       return (c) => {
         const r = c.r
         for (const [x, y, z] of c.leaves) {
-          if (r.nextFloat() < p && c.isAir(x - 1, y, z)) hang(c, x - 1, y, z)
-          if (r.nextFloat() < p && c.isAir(x + 1, y, z)) hang(c, x + 1, y, z)
-          if (r.nextFloat() < p && c.isAir(x, y, z - 1)) hang(c, x, y, z - 1)
-          if (r.nextFloat() < p && c.isAir(x, y, z + 1)) hang(c, x, y, z + 1)
+          if (r.nextFloat() < p && c.isAir(x - 1, y, z)) hang(c, x - 1, y, z, 'east')
+          if (r.nextFloat() < p && c.isAir(x + 1, y, z)) hang(c, x + 1, y, z, 'west')
+          if (r.nextFloat() < p && c.isAir(x, y, z - 1)) hang(c, x, y, z - 1, 'south')
+          if (r.nextFloat() < p && c.isAir(x, y, z + 1)) hang(c, x, y, z + 1, 'north')
         }
       }
     }
@@ -881,8 +891,8 @@ function decorator(json: Record<string, unknown>, features: { place: (id: string
             const o = opposite(d)
             if (!(r.nextFloat() <= f32(0.25))) continue
             if (!c.isAir(x + o[0], y, z + o[2])) continue
-            r.nextInt(3) // 可可果的生长阶段
-            c.set(x + o[0], y, z + o[2], 'minecraft:cocoa')
+            // 可可果：生长阶段随机，朝向原木（v7）
+            c.set(x + o[0], y, z + o[2], `minecraft:cocoa[age=${r.nextInt(3)},facing=${dirName(d)}]`)
           }
         }
       }
@@ -962,10 +972,10 @@ function decorator(json: Record<string, unknown>, features: { place: (id: string
       const trunkP = f32(json.trunk_probability as number)
       const hanger = (c: DecoratorContext, x: number, y: number, z: number) => {
         while (c.isAir(x, y - 1, z) && !(c.r.nextFloat() < 0.5)) {
-          c.set(x, y, z, 'minecraft:pale_hanging_moss')
+          c.set(x, y, z, 'minecraft:pale_hanging_moss[tip=false]')
           y--
         }
-        c.set(x, y, z, 'minecraft:pale_hanging_moss')
+        c.set(x, y, z, 'minecraft:pale_hanging_moss[tip=true]')
       }
       return (c) => {
         const r = c.r
@@ -989,7 +999,7 @@ function decorator(json: Record<string, unknown>, features: { place: (id: string
         const list = [...c.logs]
         shuffle(list, r)
         const pos = list.find(([x, y, z]) => ALL.every((d) => inTag(c.level.getBlock(x + d[0], y + d[1], z + d[2]), 'minecraft:logs')))
-        if (pos) c.set(...pos, 'minecraft:creaking_heart')
+        if (pos) c.set(...pos, 'minecraft:creaking_heart[active=true,natural=true]')
       }
     }
     default:
@@ -1049,21 +1059,22 @@ export function treeFeature(cfgJson: Record<string, unknown>, features: { place:
     const rootSet = new PosSet()
     const logSet = new PosSet()
     const leafSet = new PosSet()
+    const decoSet = new PosSet()
     const t: TreeContext = {
       level,
       r,
       cfg,
       setLog: (px, py, pz, s) => {
         logSet.add(px, py, pz)
-        level.setBlock(px, py, pz, blockName(s))
+        level.setBlock(px, py, pz, s)
       },
       setRoot: (px, py, pz, s) => {
         rootSet.add(px, py, pz)
-        level.setBlock(px, py, pz, blockName(s))
+        level.setBlock(px, py, pz, s)
       },
       setLeaf: (px, py, pz, s) => {
         leafSet.add(px, py, pz)
-        level.setBlock(px, py, pz, blockName(s))
+        level.setBlock(px, py, pz, s)
       },
       isLeafSet: (px, py, pz) => leafSet.has(px, py, pz)
     }
@@ -1092,15 +1103,92 @@ export function treeFeature(cfgJson: Record<string, unknown>, features: { place:
         leaves: leafSet.sortedByY(),
         roots: rootSet.sortedByY(),
         set: (px, py, pz, s) => {
-          level.setBlock(px, py, pz, blockName(s))
+          decoSet.add(px, py, pz)
+          level.setBlock(px, py, pz, s)
         },
         isAir: (px, py, pz) => !isOutsideBuildHeight(level, py) && isAir(level.getBlock(px, py, pz))
       }
       for (const d of decorators) d(c)
     }
+    updateLeaves(level, [...rootSet.all(), ...logSet.all(), ...leafSet.all(), ...decoSet.all()], logSet.all(), [...decoSet.all(), ...rootSet.all()])
     return true
   }
 }
+
+/**
+ * 原版 TreeFeature.updateLeaves（v7）：树放完以后，从原木出发按“走几步能到原木”给树叶写 distance（1..6）。
+ *
+ * 只在这棵树的包围盒里走（盒子 = 树根、原木、树叶、装饰的所有位置）；装饰和树根的位置先标成“走过了”，不经过它们。
+ * 树叶原来的 distance 也算数：碰到别的树已经算好 distance 的树叶，取 min(它原来的, 当前 + 1)。走不到的树叶留在 7。
+ * 每一步用 7 个集合按距离分桶（原版是 HashSet，取“第一个”元素；这里按插入顺序，只在极少的重复入桶时可能不同）。
+ */
+function updateLeaves(level: WorldGenLevel, all: Pos[], logs: Pos[], blocked: Pos[]): void {
+  if (all.length === 0) return
+  let x0 = Infinity
+  let y0 = Infinity
+  let z0 = Infinity
+  let x1 = -Infinity
+  let y1 = -Infinity
+  let z1 = -Infinity
+  for (const [x, y, z] of all) {
+    x0 = Math.min(x0, x)
+    y0 = Math.min(y0, y)
+    z0 = Math.min(z0, z)
+    x1 = Math.max(x1, x)
+    y1 = Math.max(y1, y)
+    z1 = Math.max(z1, z)
+  }
+  const W = x1 - x0 + 1
+  const H = y1 - y0 + 1
+  const D = z1 - z0 + 1
+  const inside = (x: number, y: number, z: number) => x >= x0 && x <= x1 && y >= y0 && y <= y1 && z >= z0 && z <= z1
+  const idx = (x: number, y: number, z: number) => ((x - x0) * H + (y - y0)) * D + (z - z0)
+  const filled = new Uint8Array(W * H * D)
+  for (const [x, y, z] of blocked) if (inside(x, y, z)) filled[idx(x, y, z)] = 1
+  const buckets: Map<number, Pos>[] = Array.from({ length: 7 }, () => new Map())
+  for (const p of logs) buckets[0].set(key(p), p)
+  let i = 0
+  for (;;) {
+    while (i < 7 && buckets[i].size > 0) {
+      const [k0, pos] = buckets[i].entries().next().value as [number, Pos]
+      buckets[i].delete(k0)
+      const [x, y, z] = pos
+      if (!inside(x, y, z)) continue
+      if (i !== 0) level.setBlock(x, y, z, withProp(level.getState(x, y, z), 'distance', i))
+      filled[idx(x, y, z)] = 1
+      for (const [dx, dy, dz] of DIRECTIONS) {
+        const nx = x + dx
+        const ny = y + dy
+        const nz = z + dz
+        if (!inside(nx, ny, nz) || filled[idx(nx, ny, nz)]) continue
+        const st = level.getState(nx, ny, nz)
+        // 原版 LeavesBlock.getOptionalDistanceAt：原木 0，有 distance 属性的（树叶）取它的值，其他没有
+        const opt = inTag(st, 'minecraft:logs') ? 0 : Number(propOfState(st, 'distance') ?? NaN)
+        if (Number.isNaN(opt)) continue
+        const k = Math.min(opt, i + 1)
+        if (k < 7) {
+          buckets[k].set(key([nx, ny, nz]), [nx, ny, nz])
+          i = Math.min(i, k)
+        }
+      }
+    }
+    if (i >= 7) return
+    i++
+  }
+}
+
+/** 位置 → 数字 key（够用的范围：x、z ±2^20，y ±2^10） */
+const key = (p: Pos) => ((p[0] + 1048576) * 2097152 + (p[2] + 1048576)) * 2048 + (p[1] + 1024)
+
+/** 原版 Direction.values() 的顺序：下、上、北、南、西、东 */
+const DIRECTIONS: Pos[] = [
+  [0, -1, 0],
+  [0, 1, 0],
+  [0, 0, -1],
+  [0, 0, 1],
+  [-1, 0, 0],
+  [1, 0, 0]
+]
 
 export type { IntProvider }
 void floatProvider

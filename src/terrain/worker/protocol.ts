@@ -28,7 +28,7 @@ export interface ChunkData {
   /** 每个 section 的方块（调色板 + 位压缩数组），从下往上 */
   sections: PalettedData[]
   /** 不压缩的方块（v6），下标 ((y - minY) * 16 + z) * 16 + x，算光照时要发给 Worker */
-  blocks: Uint8Array
+  blocks: Uint16Array
   /** 区块加载后要马上更新一次的流体（区块内编号，见 Chunk.index），让含水层边上的水流进洞里 */
   fluidUpdates: Int32Array
   /** 每一列草 / 树叶 / 水的颜色（v4）：[(lz*16+lx)*3 + 种类]*3 + RGB，种类 0 草 1 树叶 2 水 */
@@ -45,7 +45,7 @@ export interface Requests {
    * 光照 + 网格（v6）：chunks 是周围 3×3 个区块的方块（先 z 后 x），返回中心区块 18×18 列的光照和每个 section 的网格。
    * greedy=false 时不合并面（对比用）
    */
-  light: [{ chunks: Uint8Array[]; greedy: boolean }, { light: Uint8Array; meshes: SectionMeshes[]; ms: number }]
+  light: [{ chunks: Uint16Array[]; greedy: boolean }, { light: Uint8Array; meshes: SectionMeshes[]; changes: Int32Array; ms: number }]
   /** 天空和雾的颜色（v6）：玩家所在位置周围的生物群系 sky_color / fog_color 按原版 CubicSampler 平均 */
   skyColors: [{ x: number; y: number; z: number }, { sky: [number, number, number]; fog: [number, number, number] }]
   /** F3 调试屏的 NoiseRouter 一行 */

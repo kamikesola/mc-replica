@@ -8,7 +8,7 @@
  * 存的是方块坐标和方块名（事实数据），不是原版的任何文件。
  */
 import { writeFileSync, readFileSync } from 'node:fs'
-import { NAME_BY_BLOCK } from '../../src/terrain/blocks'
+import { NAME_BY_STATE } from '../../src/terrain/blocks'
 import { chunkSource } from '../../src/terrain/worker/surface'
 import { Worldgen, type PackInput } from '../../src/terrain/worldgen/Worldgen'
 import { oresOnlyPack, ORE_BLOCKS, TREE_BLOCKS, treesOnlyPack } from '../../tests/featurePacks'
@@ -33,7 +33,7 @@ function collect(kind: string, pack: PackInput | null, worlds: string[], chunks:
     let n = 0
     let bad = 0
     for (let i = 0; i < o.length; i++) {
-      const p = NAME_BY_BLOCK[o[i]]
+      const p = NAME_BY_STATE[o[i]]
       const q = v.blocks[i] ?? 'minecraft:air'
       if (!re.test(p) && !re.test(q)) continue
       if (p !== q) bad++

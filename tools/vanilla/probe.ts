@@ -5,7 +5,7 @@
  *
  * 列出“我们有、原版没有”和“原版有、我们没有”的格子，带上下左右前后六个邻居（我们 / 原版）。
  */
-import { NAME_BY_BLOCK } from '../../src/terrain/blocks'
+import { NAME_BY_STATE } from '../../src/terrain/blocks'
 import Section from '../../src/terrain/chunk/Section'
 import { generateChunk } from '../../src/terrain/worker/surface'
 import { Worldgen } from '../../src/terrain/worldgen/Worldgen'
@@ -30,7 +30,7 @@ const c = generateChunk(wg, dim, s, cx, cz, {})
 const ours = new Map<number, string>()
 c.sections.forEach((d, sy) => {
   const sec = Section.fromData(d)
-  for (let i = 0; i < 4096; i++) ours.set((sy * 16 + (i >> 8)) * 256 + (i & 255), NAME_BY_BLOCK[sec.blocks.get(i)])
+  for (let i = 0; i < 4096; i++) ours.set((sy * 16 + (i >> 8)) * 256 + (i & 255), NAME_BY_STATE[sec.blocks.get(i)])
 })
 const norm = (n: string | undefined) => (n ?? 'air').replace('minecraft:', '').replace('cave_air', 'air')
 const o = (lx: number, y: number, lz: number) => (lx < 0 || lx > 15 || lz < 0 || lz > 15 ? '?' : norm(ours.get((y - s.minY) * 256 + lz * 16 + lx)))

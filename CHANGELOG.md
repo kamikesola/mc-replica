@@ -2,6 +2,37 @@
 
 每个版本对应一个 git tag 和一篇文章。数字来自 `tools/` 下的脚本或 `tests/` 里的测试，可以自己复现。
 
+## v7 · 方块状态
+
+文章：[docs/articles/v7-方块状态.md](docs/articles/v7-方块状态.md) · 日志：[docs/notes/v7-notes.md](docs/notes/v7-notes.md)
+
+**新增**
+
+- 方块状态（`terrain/states.ts`）：属性、取值和原版一致（`stateDefs.json` 由 `tools/vanilla/gen-states.py` 从原版数据报告生成）；
+  方块 b 的默认状态编号就是 b，共 2372 个状态。`blocks.ts` 新增 `STATE_COUNT`、`BLOCK_OF`、`stateOf`、`withState`、`propOf`、
+  `fullStateName`、`parseState`、`NAME_BY_STATE`、`FACE_MASK`
+- 地物写出原版的状态：树叶 distance（`TreeFeature.updateLeaves` + 区块落定 `worldgen/feature/settle.ts`）、原木 axis、藤蔓 / 发光地衣 / 幽匿脉络的面、
+  两格高植物的上半、雪地草方块、滴水石锥、海带、竹子、海泡菜、珊瑚扇、紫水晶芽、大蘑菇菌盖、化石骨块、紫颂植物、铁栏杆、箱子、
+  可可果、垂吊苍白苔藓、幽匿尖啸体、嘎枝之心、气泡柱、蜂巢；配置里的 `Properties` 都带上
+- 光照属性按状态（`gen-light.py` 按每个状态查原版）：有浆果的洞穴藤蔓、海泡菜个数、含水的方块
+- 纹理按状态：横着的原木、雪地草方块、蘑菇方块的里面、有浆果的洞穴藤蔓、两格高的花的下半；雪层按 layers 的厚度
+- 游戏里：放原木按点的面定朝向；F3 显示准星方块的完整状态；区块点亮时一起落定（Worker 的 `light` 返回改动 `changes`）
+- 工具：`diff.ts` / `diff-areas.ts` 同时比较完整状态（`STATES=1` 按状态列差别）、用 3×3 区块落定后的结果；`make-state-fixture.ts`
+- 测试：`tests/states.test.ts`（5 个）：编号、属性、原版状态顺序、按状态的表、和原版存档按类别逐格对照（`tests/fixtures/states7.json`）
+
+**改动**
+
+- 区块、原型、网格邻域、光照网格从 `Uint8Array` 换成 `Uint16Array`；调色板直接模式 12 位（`BLOCK_BITS` 改名 `STATE_BITS`）
+- 所有按方块查的表改成按状态查；`NAME_BY_BLOCK[格子的值]` 换成 `NAME_BY_STATE`
+- `WorldGenLevel` 加 `getState`；`setBlock` 接受带属性的状态；`core.parseState` 带上属性
+- 多面方块的面不再用每次装饰的临时表（`faceStore`），直接存在状态里（`faceMask` / `setFaces`）
+- `rotated_block_provider` 消耗一次随机数（原版 `Direction.Axis.getRandom`）
+
+**已知问题**
+
+- 楼梯、台阶等形状、珊瑚扇、滴水石锥的模型还是旧的（v7.1 做 JSON 模型）
+- 约 1.4% 的树叶原版没有被方块刻更新，我们算的是更新后的值
+
 ## v6 · 光照与昼夜
 
 文章：[docs/articles/v6-光照与昼夜.md](docs/articles/v6-光照与昼夜.md) · 日志：[docs/notes/v6-notes.md](docs/notes/v6-notes.md)

@@ -80,7 +80,18 @@ npx tsx tools/vanilla/diff-light.ts <full 存档> --vanilla-blocks --areas tools
                                                               # v6：用原版存档里的方块算，只检验光照引擎；去掉 --vanilla-blocks 是端到端
 npx tsx tools/vanilla/make-light-fixture.ts <bare 存档> <bare52 存档>
                                                               # v6：重新生成 tests/fixtures/light6.json
+python3 tools/vanilla/gen-states.py <generated/reports/blocks.json>
+                                                              # v7：方块状态的属性和取值 → src/terrain/stateDefs.json
+                                                              #     （改了 stateDefs.json 之后要重跑 gen-light.py，光照属性按状态查）
+STATES=1 npx tsx tools/vanilla/diff-areas.ts <full 存档> tools/vanilla/areas.txt tools/vanilla/areas51.txt
+                                                              # v7：同时比较完整状态（带属性），差别按状态列出
+npx tsx tools/vanilla/make-state-fixture.ts <full 存档> tools/vanilla/areas.txt tools/vanilla/areas51.txt
+                                                              # v7：重新生成 tests/fixtures/states7.json
 ```
+
+`blocks.json` 是原版服务端的数据报告：`java -DbundlerMainClass=net.minecraft.data.Main -jar server.jar --reports`，
+输出在 `generated/reports/`。v7 起 `diff.ts` 比较的是区块“落定”之后的结果（树叶的 distance 要看周围 3×3 个区块，见
+`src/terrain/worldgen/feature/settle.ts`），所以开着地物时会慢一些。
 
 `gen-light.py` 要的 jar 是 bundler 里面那个真正的服务端（`META-INF/versions/1.21.4/server-1.21.4.jar`），
 libraries 是 bundler 运行一次后解出来的 `libraries/` 目录。它会编译 `LightDump.java` 并直接调用原版的类

@@ -3,7 +3,7 @@
  * 都对应原版 net.minecraft.world.level.levelgen.feature 下的同名类，随机数的消耗顺序和原版一致
  * （用 javap 对过字节码，见 docs/notes/v5.1-notes.md）。
  */
-import { blockPredicate, blocksMotion, canSurvive, intProvider, isAir, isDoublePlant, isSturdy, parseState, stateProvider, type WorldGenLevel } from './core'
+import { blockName, blockPredicate, blocksMotion, propOfState, withProp, canSurvive, intProvider, isAir, isDoublePlant, isSturdy, parseState, stateProvider, type WorldGenLevel } from './core'
 import { inTag } from './tags'
 import type { FeaturePlacer } from './placement'
 import { javaHashOrder } from './tree'
@@ -34,18 +34,34 @@ export function shuffle<T>(list: T[], r: RandomSource): T[] {
   return list
 }
 
-/** 原版 DoublePlantBlock.placeAt：下半格 + 上半格（我们不分上下半，用同一种方块） */
+/** 原版 DoublePlantBlock.placeAt：下半格 + 上半格（v7：上半格 half=upper） */
 export function placePlant(l: WorldGenLevel, state: string, x: number, y: number, z: number) {
   l.setBlock(x, y, z, state)
-  if (isDoublePlant(state)) l.setBlock(x, y + 1, z, state)
+  if (isDoublePlant(state)) l.setBlock(x, y + 1, z, withProp(state, 'half', 'upper'))
 }
 
-/** 每个 WorldGenLevel（一次区块装饰）里多面方块的面：位置 → 6 位掩码（按 DIRECTIONS 的顺序） */
-const FACES = new WeakMap<WorldGenLevel, Map<string, number>>()
-export function faceStore(l: WorldGenLevel): Map<string, number> {
-  let m = FACES.get(l)
-  if (!m) FACES.set(l, (m = new Map()))
+/** 多面方块（藤蔓、发光地衣、幽匿脉络）的面对应的属性，按 DIRECTIONS 的顺序 */
+const FACE_PROPS = ['down', 'up', 'north', 'south', 'west', 'east']
+
+/** 这一格的多面方块贴着哪几面（v7：从方块状态读；不是这种方块就是 0），6 位掩码按 DIRECTIONS 的顺序 */
+export function faceMask(l: WorldGenLevel, x: number, y: number, z: number, block: string): number {
+  const s = l.getState(x, y, z)
+  if (blockName(s) !== block) return 0
+  let m = 0
+  for (let d = 0; d < 6; d++) if (propOfState(s, FACE_PROPS[d]) === 'true') m |= 1 << d
   return m
+}
+
+/**
+ * 把这一格设成贴着 mask 这几面的多面方块（v7）。
+ * 原版 MultifaceBlock.getStateForPlacement：放进水源里的是含水的；原来就是这种方块的保留含水
+ */
+export function setFaces(l: WorldGenLevel, x: number, y: number, z: number, block: string, mask: number): boolean {
+  const cur = l.getState(x, y, z)
+  let s = block
+  if (cur === 'minecraft:water[level=0]' || (blockName(cur) === block && propOfState(cur, 'waterlogged') === 'true')) s = withProp(s, 'waterlogged', 'true')
+  for (let d = 0; d < 6; d++) if (mask & (1 << d)) s = withProp(s, FACE_PROPS[d], 'true')
+  return l.setBlock(x, y, z, s)
 }
 
 // ---------------------------------------------------------------- random_patch / flower / no_bonemeal_flower
@@ -148,7 +164,7 @@ export function seagrass(cfg: Record<string, unknown>): FeaturePlacer {
     if (tall) {
       if (l.getBlock(x, y + 1, z) === WATER) {
         l.setBlock(x, y, z, state)
-        l.setBlock(x, y + 1, z, state)
+        l.setBlock(x, y + 1, z, withProp(state, 'half', 'upper'))
       }
     } else l.setBlock(x, y, z, state)
     return true
@@ -164,14 +180,12 @@ export function kelp(): FeaturePlacer {
     for (let i = 0; i <= k; i++) {
       if (l.getBlock(x, y, z) === WATER && l.getBlock(x, y + 1, z) === WATER && canSurvive('minecraft:kelp_plant', l, x, y, z)) {
         if (i === k) {
-          r.nextInt(4) // 顶端的 age
-          l.setBlock(x, y, z, 'minecraft:kelp')
+          l.setBlock(x, y, z, `minecraft:kelp[age=${r.nextInt(4) + 20}]`) // 顶端的 age 20..23
           placed++
         } else l.setBlock(x, y, z, 'minecraft:kelp_plant')
       } else if (i > 0) {
         if (canSurvive('minecraft:kelp', l, x, y - 1, z) && l.getBlock(x, y - 2, z) !== 'minecraft:kelp') {
-          r.nextInt(4)
-          l.setBlock(x, y - 1, z, 'minecraft:kelp')
+          l.setBlock(x, y - 1, z, `minecraft:kelp[age=${r.nextInt(4) + 20}]`)
           placed++
         }
         break
@@ -193,9 +207,9 @@ export function seaPickle(cfg: Record<string, unknown>): FeaturePlacer {
       const x = x0 + dx
       const z = z0 + dz
       const y = l.getHeight('OCEAN_FLOOR', x, z)
-      r.nextInt(4) // 几个海泡菜（pickles 属性）
+      const pickles = r.nextInt(4) + 1 // 几个海泡菜（v7：写进 pickles 属性，越多越亮）
       if (l.getBlock(x, y, z) === WATER && canSurvive('minecraft:sea_pickle', l, x, y, z)) {
-        l.setBlock(x, y, z, 'minecraft:sea_pickle')
+        l.setBlock(x, y, z, `minecraft:sea_pickle[pickles=${pickles}]`)
         placed++
       }
     }
@@ -223,11 +237,14 @@ export function bamboo(cfg: Record<string, unknown>): FeaturePlacer {
             if (inTag(l.getBlock(px, py, pz), 'minecraft:dirt')) l.setBlock(px, py, pz, 'minecraft:podzol')
           }
       }
+      // v7：原版的竹子状态——茎 age=1；最上面一格大叶子、stage=1，下面两格大叶子、小叶子
+      const TRUNK = 'minecraft:bamboo[age=1,leaves=none,stage=0]'
       let y = y0
-      for (let i = 0; i < j && isAir(l.getBlock(x, y, z)); i++) l.setBlock(x, y++, z, 'minecraft:bamboo')
+      for (let i = 0; i < j && isAir(l.getBlock(x, y, z)); i++) l.setBlock(x, y++, z, TRUNK)
       if (y - y0 >= 3) {
-        // 顶上三格换成带叶子的状态：方块还是竹子
-        l.setBlock(x, y, z, 'minecraft:bamboo')
+        l.setBlock(x, y, z, 'minecraft:bamboo[age=1,leaves=large,stage=1]')
+        l.setBlock(x, y - 1, z, 'minecraft:bamboo[age=1,leaves=large,stage=0]')
+        l.setBlock(x, y - 2, z, 'minecraft:bamboo[age=1,leaves=small,stage=0]')
       }
     }
     return true
@@ -243,7 +260,7 @@ export function vines(): FeaturePlacer {
       const [dx, dy, dz] = DIRECTIONS[d]
       const b = l.getBlock(x + dx, y + dy, z + dz)
       if (isSturdy(b)) {
-        l.setBlock(x, y, z, 'minecraft:vine')
+        l.setBlock(x, y, z, `minecraft:vine[${FACE_PROPS[d]}=true]`) // 只贴第一面（原版 VinesFeature）
         return true
       }
     }
@@ -271,14 +288,10 @@ export function multifaceGrowth(cfg: Record<string, unknown>): FeaturePlacer {
   if (floor) valid.push(DOWN)
   if (wall) valid.push(...HORIZONTAL_PLANE)
   const isAirOrWater = (b: string) => isAir(b) || b === WATER
-  const addFace = (l: WorldGenLevel, x: number, y: number, z: number, d: number) => {
-    const m = faceStore(l)
-    const k = `${x},${y},${z}`
-    m.set(k, (m.get(k) ?? 0) | (1 << d))
-  }
+  const addFace = (l: WorldGenLevel, x: number, y: number, z: number, d: number) => setFaces(l, x, y, z, block, faceMask(l, x, y, z, block) | (1 << d))
   const at = (l: WorldGenLevel, x: number, y: number, z: number, d: number) => l.getBlock(x + DIRECTIONS[d][0], y + DIRECTIONS[d][1], z + DIRECTIONS[d][2])
-  /** 原版 MultifaceBlock.isValidStateForPlacement：这一面贴着的方块是满的；faces = 这一格已经有的面（不知道就是 null） */
-  const canAttach = (l: WorldGenLevel, x: number, y: number, z: number, d: number, faces: Set<number> | null) => !(faces?.has(d) ?? false) && isSturdy(at(l, x, y, z, d))
+  /** 原版 MultifaceBlock.isValidStateForPlacement：这一面还没有，并且贴着的方块是满的（v7：已有的面从方块状态读） */
+  const canAttach = (l: WorldGenLevel, x: number, y: number, z: number, d: number) => !(faceMask(l, x, y, z, block) & (1 << d)) && isSturdy(at(l, x, y, z, d))
 
   /** 原版 MultifaceSpreader.spreadFromFaceTowardRandomDirection：从刚放下的这一面往随机方向蔓延一格 */
   const spread = (l: WorldGenLevel, r: RandomSource, x: number, y: number, z: number, face: number) => {
@@ -288,16 +301,16 @@ export function multifaceGrowth(cfg: Record<string, unknown>): FeaturePlacer {
       // 三种蔓延方式：同一格换一面、同一平面的邻格、绕过边角
       const [dx, dy, dz] = DIRECTIONS[d]
       const [fx, fy, fz] = DIRECTIONS[face]
-      const cands: [number, number, number, number, Set<number> | null][] = [
-        [x, y, z, d, new Set([face])],
-        [x + dx, y + dy, z + dz, face, null],
-        [x + dx + fx, y + dy + fy, z + dz + fz, opposite(d), null]
+      const cands: [number, number, number, number][] = [
+        [x, y, z, d],
+        [x + dx, y + dy, z + dz, face],
+        [x + dx + fx, y + dy + fy, z + dz + fz, opposite(d)]
       ]
-      for (const [sx, sy, sz, sf, faces] of cands) {
+      for (const [sx, sy, sz, sf] of cands) {
         const b = l.getBlock(sx, sy, sz)
-        if (!(isAir(b) || b === block || b === WATER)) continue
-        if (!canAttach(l, sx, sy, sz, sf, b === block ? (faces ?? null) : new Set())) continue
-        if (b !== block) l.setBlock(sx, sy, sz, block)
+        // 原版 stateCanBeReplaced：空气、同种方块、水源
+        if (!(isAir(b) || b === block || l.getState(sx, sy, sz) === 'minecraft:water[level=0]')) continue
+        if (!canAttach(l, sx, sy, sz, sf)) continue
         addFace(l, sx, sy, sz, sf)
         return
       }
@@ -307,10 +320,7 @@ export function multifaceGrowth(cfg: Record<string, unknown>): FeaturePlacer {
   const placeIfPossible = (l: WorldGenLevel, r: RandomSource, x: number, y: number, z: number, dirs: number[]) => {
     for (const d of dirs) {
       if (!canPlaceOn(at(l, x, y, z, d))) continue
-      const cur = l.getBlock(x, y, z)
-      if (!canAttach(l, x, y, z, d, cur === block ? null : new Set())) return false
-      l.setBlock(x, y, z, block)
-      if (cur !== block) faceStore(l).delete(`${x},${y},${z}`)
+      if (!canAttach(l, x, y, z, d)) return false
       addFace(l, x, y, z, d)
       if (r.nextFloat() < chance) spread(l, r, x, y, z, d)
       return true

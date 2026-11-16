@@ -12,6 +12,7 @@ import { peaksAndValleys } from '../worldgen/density/peaksAndValleys'
 import { loadPacks } from './datapacks'
 import type { Method, Params, RequestMessage, ResponseMessage, Result } from './protocol'
 import { generateChunk, meshChunk } from './surface'
+import { settleLeaves } from '../worldgen/feature/settle'
 import { gaussianSampleRgb } from '../../sky/formulas'
 
 const ready: Promise<Worldgen> = loadPacks().then((packs) => new Worldgen(packs))
@@ -61,8 +62,13 @@ const handlers: { [M in Method]: Handler<M> } = {
   light(_wg, p) {
     if (!settings) throw new Error('还没有 init')
     const t0 = performance.now()
-    const r = meshChunk(p.chunks, settings.height, hasSkyLight(settingsId), { greedy: p.greedy })
-    const buffers: ArrayBufferLike[] = [r.light.buffer]
+    // v7：先“落定”（树叶的 distance，见 settle.ts），改了哪些格子要告诉主线程
+    const before = p.chunks[4].slice()
+    settleLeaves(p.chunks, settings.height)
+    const changes: number[] = []
+    for (let i = 0; i < before.length; i++) if (before[i] !== p.chunks[4][i]) changes.push(i, p.chunks[4][i])
+    const r = { ...meshChunk(p.chunks, settings.height, hasSkyLight(settingsId), { greedy: p.greedy }), changes: Int32Array.from(changes) }
+    const buffers: ArrayBufferLike[] = [r.light.buffer, r.changes.buffer]
     for (const m of r.meshes) {
       if (!m) continue
       for (const part of [m.opaque, m.water]) buffers.push(part.positions.buffer, part.info.buffer, part.light.buffer, part.indices.buffer)

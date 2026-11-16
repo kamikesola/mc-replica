@@ -1,4 +1,4 @@
-import { BlockType, FACE_TEXTURES, FLUID_KIND, FLUIDS, FluidKind, SHAPE, SHAPE_HEIGHT, SOLID } from '../blocks'
+import { BlockType, FACE_MASK, FACE_TEXTURES, FLUID_KIND, FLUIDS, FluidKind, SHAPE, SHAPE_HEIGHT, SOLID, STATE_COUNT } from '../blocks'
 import { LIGHT_BLOCK, LIGHT_EMISSION } from '../light/LightEngine'
 import { TEXTURE_LAYER, TINT_BY_LAYER } from '../textures/painters'
 
@@ -148,14 +148,14 @@ export interface MeshOptions {
 }
 
 /** 原版 emissiveRendering 的方块：画的时候按最亮算（岩浆块） */
-const EMISSIVE = new Uint8Array(256)
+const EMISSIVE = new Uint8Array(STATE_COUNT)
 EMISSIVE[BlockType.magma_block] = 1
 
 /**
  * 原版 LevelRenderer.getLightColor：一格“看起来”的亮度，打包成 天空光 | 方块光 << 4。
  * 方块光取存的亮度和方块自己发光的较大值；emissiveRendering 的方块直接最亮
  */
-function lightColor(blocks: Uint8Array, light: Uint8Array | undefined, i: number): number {
+function lightColor(blocks: Uint16Array, light: Uint8Array | undefined, i: number): number {
   const b = blocks[i]
   if (EMISSIVE[b]) return 0xff
   const l = light ? light[i] : 15
@@ -166,7 +166,7 @@ function lightColor(blocks: Uint8Array, light: Uint8Array | undefined, i: number
 /**
  * @param blocks 18³ 的邻域，下标见 nIndex()；section 外面的那一圈只用来判断遮挡和 AO
  */
-export function meshSection(blocks: Uint8Array, opts: MeshOptions = {}): { opaque: SectionMesh; water: SectionMesh } {
+export function meshSection(blocks: Uint16Array, opts: MeshOptions = {}): { opaque: SectionMesh; water: SectionMesh } {
   const greedy = opts.greedy ?? true
   const light = opts.light
   const opaque = new Builder()
@@ -331,7 +331,7 @@ export function meshSection(blocks: Uint8Array, opts: MeshOptions = {}): { opaqu
  *   multiface（藤蔓、发光地衣、幽匿脉络，v5.1）：贴着每个实心邻居的那一面画一片（离开 1/64 格，正反两面）；
  *     原版这些方块记着“贴在哪几面”，我们的方块没有状态，就按“哪几面挨着实心方块”画。一面都没有时画成十字
  */
-function shapedBlocks(out: Builder, blocks: Uint8Array, light: Uint8Array | undefined): void {
+function shapedBlocks(out: Builder, blocks: Uint16Array, light: Uint8Array | undefined): void {
   const S = POSITION_SCALE
   /** 整个面一个亮度（flat 光照），4 个角都一样 */
   const flatL = (i: number) => {
@@ -388,12 +388,14 @@ function shapedBlocks(out: Builder, blocks: Uint8Array, light: Uint8Array | unde
 }
 
 /** 多面方块：每个实心邻居那一面画一片；一片都没画返回 false */
-function multiface(out: Builder, blocks: Uint8Array, b: number, x: number, y: number, z: number, own: number[]): boolean {
+function multiface(out: Builder, blocks: Uint16Array, b: number, x: number, y: number, z: number, own: number[]): boolean {
   const eps = POSITION_SCALE / 64
   let any = false
+  // v7：贴在哪几面看方块状态；没有记录面的（默认状态）退回 v5.1 的做法：挨着实心方块的面都画
+  const mask = FACE_MASK[b]
   for (let face = 0; face < 6; face++) {
     const n = FACE_DIRS[face]
-    if (!SOLID[blocks[nIndex(x + n[0], y + n[1], z + n[2])]]) continue
+    if (mask ? !(mask & (1 << face)) : !SOLID[blocks[nIndex(x + n[0], y + n[1], z + n[2])]]) continue
     const axis = face >> 1
     const u = (axis + 1) % 3
     const v = (axis + 2) % 3
@@ -441,7 +443,7 @@ function emit(out: Builder, key: number, face: number, axis: number, u: number, 
 function emitFluid(
   opaque: Builder,
   water: Builder,
-  blocks: Uint8Array,
+  blocks: Uint16Array,
   hs: Float32Array,
   face: number,
   axis: number,
@@ -486,7 +488,7 @@ function emitFluid(
  *   一个角的高度 = 这一格、两个相邻格、对角那一格的加权平均，高度 ≥ 0.8 的权重是 10
  *   （所以挨着源的角基本和源一样高），相邻格上面有流体时这个角直接是 1
  */
-export function fluidHeights(hood: Uint8Array, x: number, y: number, z: number, kind: number): [number, number, number, number] {
+export function fluidHeights(hood: Uint16Array, x: number, y: number, z: number, kind: number): [number, number, number, number] {
   const H = (x: number, y: number, z: number): number => {
     const b = hood[nIndex(x, y, z)]
     if (FLUID_KIND[b] === kind) return FLUID_KIND[hood[nIndex(x, y + 1, z)]] === kind ? 1 : FLUIDS[b].amount / 9

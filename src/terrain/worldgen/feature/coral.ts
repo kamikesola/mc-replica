@@ -21,13 +21,12 @@ function placeCoralBlock(l: WorldGenLevel, r: RandomSource, x: number, y: number
   if (!((s === WATER || CORALS.includes(s)) && l.getBlock(x, y + 1, z) === WATER)) return false
   l.setBlock(x, y, z, state)
   if (r.nextFloat() < 0.25) l.setBlock(x, y + 1, z, CORALS[r.nextInt(CORALS.length)])
-  else if (r.nextFloat() < 0.05) {
-    r.nextInt(4)
-    l.setBlock(x, y + 1, z, 'minecraft:sea_pickle')
-  }
+  else if (r.nextFloat() < 0.05) l.setBlock(x, y + 1, z, `minecraft:sea_pickle[pickles=${r.nextInt(4) + 1}]`)
+  // 四周随机贴珊瑚扇，朝外（v7：facing = 这个方向，原版 BaseCoralWallFanBlock.FACING）
   for (const [dx, dz] of HORIZONTAL) {
     if (!(r.nextFloat() < 0.2)) continue
-    if (l.getBlock(x + dx, y, z + dz) === WATER) l.setBlock(x + dx, y, z + dz, WALL_CORALS[r.nextInt(WALL_CORALS.length)])
+    const facing = dz < 0 ? 'north' : dz > 0 ? 'south' : dx > 0 ? 'east' : 'west'
+    if (l.getBlock(x + dx, y, z + dz) === WATER) l.setBlock(x + dx, y, z + dz, `${WALL_CORALS[r.nextInt(WALL_CORALS.length)]}[facing=${facing}]`)
   }
   return true
 }

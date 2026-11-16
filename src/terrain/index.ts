@@ -188,6 +188,8 @@ export default class Terrain {
         if (nine.some((n, i) => n.version !== versions[i])) return
         c.light = r.light
         this.lastLightMs = r.ms
+        // 落定改的方块（v7，树叶的 distance）：直接写进去，不算玩家的改动、也不影响光照
+        for (let k = 0; k < r.changes.length; k += 2) c.setRaw(r.changes[k], r.changes[k + 1])
         for (let sy = 0; sy < r.meshes.length; sy++) this.setSectionMesh(c, sy, r.meshes[sy])
         this.syncBorders(c)
       })
@@ -447,7 +449,7 @@ export default class Terrain {
   /** 在主线程重建一个 section 的网格 */
   remeshSection(c: Chunk, sy: number): void {
     if (!c.light) return // 还没点亮的区块没有网格，点亮时一起生成
-    const hood = new Uint8Array(N * N * N)
+    const hood = new Uint16Array(N * N * N)
     if (this.fillNeighborhood(c, sy, hood)) c.staleSections.delete(sy)
     else c.staleSections.add(sy)
     const light = new Uint8Array(N * N * N)
@@ -461,7 +463,7 @@ export default class Terrain {
    * 先把周围 3×3 个区块取出来，避免每个方块都去 Map 里查一次。没加载的邻居当作空气。
    * 返回 false 表示有邻居区块没加载。
    */
-  private fillNeighborhood(c: Chunk, sy: number, out: Uint8Array): boolean {
+  private fillNeighborhood(c: Chunk, sy: number, out: Uint16Array): boolean {
     const around: (Chunk | undefined)[] = []
     for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) around.push(this.chunks.get(`${c.cx + dx},${c.cz + dz}`))
     const y0 = c.minY + sy * 16

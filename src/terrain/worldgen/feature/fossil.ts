@@ -2,14 +2,14 @@
  * 化石（v5.2）：原版 FossilFeature + 结构模板（StructureTemplate.placeInWorld）+ 两种结构处理器。
  * 模板来自原版 jar 的 data/minecraft/structure/fossil/*.nbt，用 tools/vanilla/structures-to-json.ts 转成 JSON 放进 datapacks。
  */
-import { isAir, type WorldGenLevel } from './core'
+import { blockName, isAir, parseState, propOfState, withProp, type WorldGenLevel } from './core'
 import { inTag } from './tags'
 import type { FeaturePlacer } from './placement'
 import type { RandomSource } from '../random/RandomSource'
 
 interface Template {
   size: [number, number, number]
-  palette: { Name: string }[]
+  palette: { Name: string; Properties?: Record<string, string> }[]
   blocks: [number, number, number, number][]
 }
 
@@ -54,9 +54,9 @@ function processors(json: unknown): Processor[] {
         // 只实现了化石用到的：block_match + always_true（不用地物的随机数）
         const rules = (p.rules as Record<string, Record<string, unknown>>[]).map((ru) => ({
           input: String(ru.input_predicate.block),
-          output: String(ru.output_state.Name)
+          output: parseState(ru.output_state)
         }))
-        return (_l, _r, _x, _y, _z, s) => rules.find((ru) => ru.input === s)?.output ?? s
+        return (_l, _r, _x, _y, _z, s) => rules.find((ru) => ru.input === blockName(s))?.output ?? s
       }
       default:
         throw new Error(`不支持的结构处理器：${type}`)
@@ -75,7 +75,9 @@ function placeTemplate(l: WorldGenLevel, r: RandomSource, t: Template, ox: numbe
     const x = ox + tx
     const y = oy + by
     const z = oz + tz
-    let s: string | null = t.palette[si].Name
+    // v7：调色板带属性（骨块的 axis），转 90° 时 x、z 轴互换（原版 RotatedPillarBlock.rotate）
+    let s: string | null = parseState(t.palette[si])
+    if ((rot === Rot.cw90 || rot === Rot.ccw90) && /\[.*axis=[xz]/.test(s)) s = withProp(s, 'axis', propOfState(s, 'axis') === 'x' ? 'z' : 'x')
     for (const p of procs) {
       s = p(l, r, x, y, z, s)
       if (s === null) break

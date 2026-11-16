@@ -164,6 +164,15 @@ function grassSide(c: Canvas, r: () => number) {
   }
 }
 
+/** 雪地草方块的侧面（v7，snowy=true）：泥土，上面一圈雪，不染色 */
+function grassSnowSide(c: Canvas, r: () => number) {
+  dirt(c, r)
+  for (let x = 0; x < TEX; x++) {
+    const depth = 2 + Math.floor(r() * 3) + (r() < 0.2 ? 1 : 0)
+    for (let y = 0; y < depth; y++) c.set(x, y, shade(hex(0xf0f6f8), 0.92 + r() * 0.1))
+  }
+}
+
 function sand(c: Canvas, r: () => number) {
   speckle(c, hex(0xdbd3a0), 0.04, r)
   blotches(c, () => shade(hex(0xdbd3a0), 0.88), 10, 1, r)
@@ -448,6 +457,12 @@ const mushroomCap = (color: number, dots: boolean) => (c: Canvas, r: () => numbe
   if (dots) blotches(c, () => hex(0xe8e0d0), 6, 4, r)
 }
 
+/** 蘑菇方块的里面（v7，没有“皮”的那几面）：米色带小孔 */
+function mushroomInside(c: Canvas, r: () => number) {
+  speckle(c, hex(0xd9c9a8), 0.05, r)
+  for (let i = 0; i < 14; i++) c.set(Math.floor(r() * TEX), Math.floor(r() * TEX), hex(0xb8a283))
+}
+
 function mushroomStem(c: Canvas, r: () => number) {
   const cols = Array.from({ length: TEX }, () => 0.9 + r() * 0.15)
   c.fill((x) => shade(hex(0xcfc6b5), cols[x] * (1 + (r() - 0.5) * 0.06)))
@@ -592,6 +607,13 @@ const flower = (color: number, tall = 0) => (c: Canvas, r: () => number) => {
   for (let y = cy - 2; y <= cy + 2; y++)
     for (let x = 5; x <= 9; x++) if (Math.abs(x - 7) + Math.abs(y - cy) <= 3) c.set(x, y, shade(hex(color), 0.8 + r() * 0.35), 255)
   c.set(7, cy, shade(hex(color), 0.6), 255)
+}
+
+/** 两格高的花的下半格（v7）：只有茎和叶子 */
+const tallFlowerBottom = (c: Canvas, r: () => number) => {
+  for (let i = 3; i < c.data.length; i += 4) c.data[i] = 0
+  for (let y = 0; y < 16; y++) c.set(7, y, shade(hex(0x3f8a2a), 0.85 + r() * 0.3), 255)
+  for (const [x, y] of [[6, 4], [5, 5], [8, 8], [9, 9], [10, 10], [6, 12], [5, 13]]) c.set(x, y, shade(hex(0x4f9a3a), 0.85 + r() * 0.3), 255)
 }
 
 const mushroomSprite = (color: number) =>
@@ -977,8 +999,14 @@ export const PAINTERS = {
   glow_lichen: lichen,
   hanging_roots: hangingRoots,
   spore_blossom: sporeBlossom,
-  cave_vines: caveVines(true),
+  cave_vines: caveVines(false),
   cave_vines_plant: caveVines(false),
+  // v7：按方块状态换的纹理
+  cave_vines_lit: caveVines(true),
+  cave_vines_plant_lit: caveVines(true),
+  grass_snow_side: grassSnowSide,
+  mushroom_block_inside: mushroomInside,
+  tall_flower_bottom: tallFlowerBottom,
   small_dripleaf: dripleaf,
   big_dripleaf: dripleaf,
   big_dripleaf_stem: dripleafStem,
@@ -1114,6 +1142,7 @@ export const TINT_BY_LAYER: Uint8Array = (() => {
   for (const n of ['jungle_leaves', 'acacia_leaves', 'dark_oak_leaves', 'mangrove_leaves'] as const) t[TEXTURE_LAYER[n]] = Tint.foliage
   t[TEXTURE_LAYER.vine] = Tint.foliage | CUTOUT
   for (const n of ['pale_hanging_moss', 'mangrove_propagule', 'cocoa'] as const) t[TEXTURE_LAYER[n]] = CUTOUT
+  for (const n of ['cave_vines_lit', 'cave_vines_plant_lit', 'tall_flower_bottom'] as const) t[TEXTURE_LAYER[n]] = CUTOUT
   // v5.1
   t[TEXTURE_LAYER.short_grass] = Tint.grass | CUTOUT
   t[TEXTURE_LAYER.fern] = Tint.grass | CUTOUT

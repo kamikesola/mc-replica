@@ -92,6 +92,12 @@ Chunk（16×16×384）
 调色板直接模式 15 位。新方块的属性全部来自原版：属性和取值（数据报告），光照、碰撞箱、破坏时间（`BlockDump.java` 从服务端导出），样子（资源包的模型）。
 按状态的数据都按原版的状态顺序存，`states.vanillaIndex` 把我们的状态换算成原版的下标。玩家的碰撞用 `COLLISION`（`control/index.ts` 的 `collisionBoxes`）。
 
+## 放方块（v9）
+
+`terrain/placement.ts`，纯函数，世界通过 `PlaceWorld.get` 读：`placement` 算出要写的格子（门、床是两格），
+`updateShape` 是“邻居变了我变成什么”，`neighborUpdates` 把变化一层层往外传。`Control.placeBlock` / `breakBlock` 调用它们，
+写入走 `Terrain.setBlock`（重建网格、更新光照、记改动）。连接要看邻居“坚固的面”（`STURDY`，原版 isFaceSturdy）。
+
 ## 方块模型（v7.1）
 
 有原版资源包（`resourcepacks/`）时，方块的样子来自原版模型：

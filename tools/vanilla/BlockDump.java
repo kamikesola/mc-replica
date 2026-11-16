@@ -5,11 +5,13 @@ import java.util.zip.*;
 /**
  * v8.1：从原版服务端导出每个方块状态的属性（tools/vanilla/gen-blocks.py 调用）。
  *
- * 输出一行一个状态：状态  lightBlock  lightEmission  破坏时间  碰撞箱（x0,y0,z0,x1,y1,z1;...）
+ * 输出一行一个状态：状态  lightBlock  lightEmission  破坏时间  碰撞箱（x0,y0,z0,x1,y1,z1;...）  坚固的面
+ * 坚固的面（v9）：6 位，第 i 位 = Direction.values()[i]（下 上 北 南 西 东）这一面能不能撑住东西（isFaceSturdy，栅栏、墙连不连就看它）
  * jar 是混淆过的。v6 的 LightDump 用的名字（ab.a、akx.a、mb.e、djn、dwy.g/k）是手查的；
  * 碰撞箱和破坏时间的方法名不手查，用反射按“签名 + 已知方块的值”认出来：
  *   碰撞箱：参数 (BlockGetter, BlockPos)、返回 VoxelShape 的方法里，栅栏高 1.5、一层雪是空的那个
  *   破坏时间：参数 (BlockGetter, BlockPos)、返回 float 的方法里，基岩 -1、石头 1.5 的那个
+ *   坚固的面：参数 (BlockGetter, BlockPos, Direction)、返回 boolean 的方法里，石头 6 面都是、下半台阶只有底面是、空气都不是的那个
  */
 public class BlockDump {
   static Object getter, pos;
@@ -67,8 +69,30 @@ public class BlockDump {
         if (bed == -1f && stone == 1.5f) { destroy = m; break; }
       } catch (Throwable t) {}
     }
-    if (collision == null || destroy == null) throw new RuntimeException("没认出方法：collision=" + collision + " destroy=" + destroy);
-    System.err.println("碰撞箱 " + collision + "\n破坏时间 " + destroy);
+    // 坚固的面：三个参数 (BlockGetter, BlockPos, Direction)
+    Method sturdy = null;
+    Object[] dirs = null;
+    search:
+    for (Class<?> c = dwy.class; c != null; c = c.getSuperclass())
+      for (Method m : c.getDeclaredMethods()) {
+        Class<?>[] p = m.getParameterTypes();
+        if (p.length != 3 || m.getReturnType() != boolean.class || p[0] != getterT || p[1] != posT || !p[2].isEnum()) continue;
+        try {
+          m.setAccessible(true);
+          Object[] d = p[2].getEnumConstants();
+          if (d.length != 6) continue;
+          dwy stone = byName.get("Block{minecraft:stone}"), slab = byName.get("Block{minecraft:oak_slab}[type=bottom,waterlogged=false]"), air = byName.get("Block{minecraft:air}");
+          boolean ok = true;
+          for (int i = 0; i < 6; i++) {
+            ok &= (boolean) m.invoke(stone, getter, pos, d[i]);
+            ok &= !(boolean) m.invoke(air, getter, pos, d[i]);
+          }
+          ok &= (boolean) m.invoke(slab, getter, pos, d[0]) && !(boolean) m.invoke(slab, getter, pos, d[1]);
+          if (ok) { sturdy = m; dirs = d; break search; }
+        } catch (Throwable t) {}
+      }
+    if (collision == null || destroy == null || sturdy == null) throw new RuntimeException("没认出方法：collision=" + collision + " destroy=" + destroy);
+    System.err.println("碰撞箱 " + collision + "\n破坏时间 " + destroy + "\n坚固的面 " + sturdy);
 
     StringBuilder out = new StringBuilder();
     for (djn b : blocks)
@@ -77,7 +101,9 @@ public class BlockDump {
         out.append(s).append('\t').append(s.g()).append('\t').append(s.k()).append('\t').append((float) destroy.invoke(s, getter, pos)).append('\t');
         List<String> boxes = new ArrayList<>();
         for (double[] a : boxes(collision.invoke(s, getter, pos))) boxes.add(a[0] + "," + a[1] + "," + a[2] + "," + a[3] + "," + a[4] + "," + a[5]);
-        out.append(String.join(";", boxes)).append('\n');
+        int mask = 0;
+        for (int i = 0; i < 6; i++) if ((boolean) sturdy.invoke(s, getter, pos, dirs[i])) mask |= 1 << i;
+        out.append(String.join(";", boxes)).append('\t').append(mask).append('\n');
       }
     java.nio.file.Files.writeString(java.nio.file.Path.of(args[0]), out.toString());
   }

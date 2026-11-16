@@ -3,7 +3,8 @@ import type { PlayerSave } from '../save/store'
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js'
 import Player, { PHYSICS } from '../player'
 import type Terrain from '../terrain'
-import { BLOCK_OF, BLOCKS, BlockType, COLLISION, COLLISION_SHAPES, HOTBAR, isFluid, propOf, stateOf } from '../terrain/blocks'
+import { BLOCK_OF, BLOCKS, BlockType, COLLISION, COLLISION_SHAPES, FLUIDS, FluidKind, HOTBAR, NAME_BY_STATE } from '../terrain/blocks'
+import { dirOf, neighborUpdates, placement, useBlock, type PlaceWorld } from '../terrain/placement'
 import { tickPlayer, type MoveInput, type MoveWorld } from './movement'
 import { AABB, collides, EMPTY, FULL_CUBE, type Vec3 } from './physics'
 import { raycast, type RayHit } from './raycast'
@@ -45,6 +46,8 @@ export default class Control {
   spawned = false
   /** 当前选中的物品栏格子 0..8 */
   slot = 0
+  /** 准星打在方块面上的那一点（世界坐标，v9） */
+  hit: [number, number, number] = [0, 0, 0]
   /** 物品栏的 9 格（v8.1 起可以用鼠标中键换成准星指着的方块） */
   hotbar: number[] = [...HOTBAR]
   /** 准星对准的方块 */
@@ -186,28 +189,49 @@ export default class Control {
 
   // ---------------------------------------------------------------- 挖 / 放
 
+  /** 方块世界的读接口（v9，给 terrain/placement.ts 用） */
+  private placeWorld: PlaceWorld = { get: (x, y, z) => this.terrain.getBlock(x, y, z) }
+  /** 写一格并通知邻居（v9）：门的另一半、栅栏的连接、楼梯拐弯……都在 neighborUpdates 里 */
+  private setAndUpdate = (x: number, y: number, z: number, s: number) => {
+    this.terrain.setBlock(x, y, z, s)
+    neighborUpdates(this.placeWorld, (nx, ny, nz, ns) => this.terrain.setBlock(nx, ny, nz, ns), x, y, z)
+  }
+
   breakBlock = () => {
     const t = this.target!
     const type = this.terrain.getBlock(t.x, t.y, t.z)
     if (type === null || !BLOCKS[BLOCK_OF[type]].breakable) return
-    this.terrain.setBlock(t.x, t.y, t.z, BlockType.air)
+    // 含水的方块挖掉以后留下水（原版：方块没了，流体状态还在）
+    this.setAndUpdate(t.x, t.y, t.z, FLUIDS[type].kind === FluidKind.water && FLUIDS[type].source && BLOCK_OF[type] !== BlockType.water ? BlockType.water : BlockType.air)
   }
 
   placeBlock = () => {
     const t = this.target!
-    const x = t.x + t.nx
-    const y = t.y + t.ny
-    const z = t.z + t.nz
-    const here = this.terrain.getBlock(x, y, z)
-    if (here === null || (here !== BlockType.air && !isFluid(here))) return
+    // v9：右键先“用”方块（开关门、活板门、栅栏门），按着 Shift 时不用、直接放
+    if (!this.keys.has('ShiftLeft') && !this.keys.has('ShiftRight')) {
+      const s = this.terrain.getBlock(t.x, t.y, t.z)
+      const used = s === null ? null : useBlock(s, this.yaw)
+      if (used !== null) {
+        this.setAndUpdate(t.x, t.y, t.z, used)
+        return
+      }
+    }
+    // v9：状态按原版的规则定（terrain/placement.ts）：楼梯的朝向和上下、台阶叠放、门和床放两格、火把插墙上……
+    const result = placement(this.placeWorld, {
+      block: this.hotbar[this.slot],
+      clicked: [t.x, t.y, t.z],
+      face: dirOf(t.nx, t.ny, t.nz),
+      hit: this.hit,
+      yaw: this.yaw,
+      pitch: this.head.rotation.x
+    })
+    if (!result) return
     // 不能把方块放进自己身体里
     const b = this.player.body
-    // v7：原木按点的那一面朝向（原版 RotatedPillarBlock.getStateForPlacement：axis = 点击面的轴）
-    const block = this.hotbar[this.slot]
-    const axis = t.nx !== 0 ? 'x' : t.ny !== 0 ? 'y' : 'z'
-    const state = propOf(block, 'axis') !== undefined ? stateOf(block, { axis }) : block
-    if (collides(this.player.pos, b.width, b.height, (bx, by, bz) => (bx === x && by === y && bz === z ? collisionBoxes(state) : EMPTY))) return
-    this.terrain.setBlock(x, y, z, state)
+    for (const [x, y, z, s] of result)
+      if (collides(this.player.pos, b.width, b.height, (bx, by, bz) => (bx === x && by === y && bz === z ? collisionBoxes(s) : EMPTY))) return
+    for (const [x, y, z, s] of result) this.terrain.setBlock(x, y, z, s)
+    for (const [x, y, z] of result) neighborUpdates(this.placeWorld, (nx, ny, nz, ns) => this.terrain.setBlock(nx, ny, nz, ns), x, y, z)
   }
 
   /**
@@ -218,7 +242,7 @@ export default class Control {
     const t = this.target
     if (!t) return
     const s = this.terrain.getBlock(t.x, t.y, t.z)
-    if (s === null || s === BlockType.air || isFluid(s)) return
+    if (s === null || s === BlockType.air || isPureFluid(s)) return
     const b = BLOCK_OF[s]
     const i = this.hotbar.indexOf(b)
     if (i >= 0) this.slot = i
@@ -350,8 +374,10 @@ export default class Control {
     const oz = p.prevPos.z + (p.pos.z - p.prevPos.z) * t
     this.target = raycast(ox, oy, oz, dir.x, dir.y, dir.z, this.reach, (x, y, z) => {
       const b = this.terrain.getBlock(x, y, z)
-      return b !== null && b !== BlockType.air && !isFluid(b)
+      return b !== null && b !== BlockType.air && !isPureFluid(b)
     })
+    // 射线打在面上的那一点（v9：放台阶、楼梯、门时要知道点在面上哪个位置）
+    if (this.target) this.hit = [ox + dir.x * this.target.distance, oy + dir.y * this.target.distance, oz + dir.z * this.target.distance]
     if (this.target) this.terrain.highlight.show(this.target.x, this.target.y, this.target.z)
     else this.terrain.highlight.hide()
   }
@@ -377,3 +403,6 @@ export function collisionBoxes(s: number): readonly AABB[] {
   }
   return boxes
 }
+
+/** 只是水或岩浆（不是含水的方块）：准星穿过去（v9：含水的楼梯、海草也能选中了） */
+const isPureFluid = (s: number) => NAME_BY_STATE[s] === 'minecraft:water' || NAME_BY_STATE[s] === 'minecraft:lava'

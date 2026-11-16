@@ -68,7 +68,7 @@ npx tsx tools/vanilla/diff-areas.ts <存档> tools/vanilla/areas.txt tools/vanil
 npx tsx tools/vanilla/probe.ts <存档> <cx> <cz> <方块名>     # v5.1：某种方块哪几格对不上，带六个邻居
 npx tsx tools/vanilla/make-full-fixture.ts <full 存档> tools/vanilla/areas51.txt tools/vanilla/areas.txt
                                                               # v5.1：重新生成 tests/fixtures/features51.json
-python3 tools/vanilla/gen-tags.py <解包的 jar 目录>          # v5.1：从原版 jar 展开方块标签，写 blockTags.json
+python3 tools/vanilla/gen-tags.py <解包的 jar 目录>          # v5.1：从原版 jar 展开方块标签，写 blockTags.json（v9 多了栅栏、墙、楼梯等 12 个）
 npx tsx tools/vanilla/structures-to-json.ts <jar 里的 data/minecraft/structure> datapacks/vanilla/structure
                                                               # v5.2：化石的结构模板（.nbt → JSON）
 python3 tools/vanilla/gen-blocks.py <generated/reports/blocks.json> <server-1.21.4.jar> <libraries 目录>

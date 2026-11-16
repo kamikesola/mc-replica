@@ -447,7 +447,7 @@ for (let b = 24; b <= 31; b++) NAME_BY_BLOCK[b] = 'minecraft:lava'
  * 它们的形状、碰撞箱、光照都来自原版服务端（tools/vanilla/gen-blocks.py），样子来自资源包里的模型（v7.1）。
  * 没有资源包时，程序纹理按名字挑一张差不多的（木头类用木板、石头类用圆石……），形状按碰撞箱粗略地分成方块 / 薄片 / 十字。
  */
-const SHAPES_DATA = SHAPES_JSON as unknown as { shapes: number[][]; collision: Record<string, number | number[]>; hardness: Record<string, number | number[]> }
+const SHAPES_DATA = SHAPES_JSON as unknown as { shapes: number[][]; collision: Record<string, number | number[]>; hardness: Record<string, number | number[]>; sturdy: Record<string, number | number[]> }
 const RAW_DEFS = STATE_DEFS as unknown as Record<string, { props: [string, string[]][]; default: Record<string, string> }>
 
 /** 原版方块的默认状态在它所有状态里的下标（原版顺序） */
@@ -647,4 +647,13 @@ export const COLLISION: Uint16Array = Uint16Array.from({ length: STATE_COUNT }, 
 export const HARDNESS: Float32Array = Float32Array.from({ length: STATE_COUNT }, (_, s) => {
   const v = SHAPES_DATA.hardness[NAME_BY_STATE[s]]
   return v === undefined ? 0 : perVanillaState(v, vanillaIndex(STATES, s))
+})
+
+/**
+ * 坚固的面（v9，原版 isFaceSturdy）：6 位，第 i 位是原版 Direction 的第 i 个方向（下 上 北 南 西 东）。
+ * 这一面能“撑住”东西：栅栏、墙、玻璃板连不连过去，火把能不能插在上面，都看它
+ */
+export const STURDY: Uint8Array = Uint8Array.from({ length: STATE_COUNT }, (_, s) => {
+  const v = SHAPES_DATA.sturdy[NAME_BY_STATE[s]]
+  return v === undefined ? (SOLID[s] ? 63 : 0) : perVanillaState(v, vanillaIndex(STATES, s))
 })

@@ -19,6 +19,7 @@ import Terrain from './terrain'
 import UI from './ui'
 import { IdbStore } from './save/store'
 import { WorldSave } from './save/WorldSave'
+import { fullStateName, parseState } from './terrain/blocks'
 
 import './style.css'
 
@@ -115,4 +116,4 @@ const clock = new THREE.Clock()
 })()
 
 // 方便在浏览器控制台里调试：game.terrain.getBlock(0, 64, 0)
-Object.assign(window, { game: { core, player, terrain, control, ui, sky, store, save } })
+Object.assign(window, { game: { core, player, terrain, control, ui, sky, store, save, parseState, fullStateName } })

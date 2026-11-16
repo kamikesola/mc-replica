@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { createBlockTextures } from '../textures'
-import { POSITION_SCALE } from './mesher'
+import { POSITION_SCALE, UV_SCALE } from './mesher'
+import { TINT_COLORS } from '../models'
 
 /**
  * 方块材质（对应原项目的 terrain/mesh/materials.ts）。
@@ -27,13 +28,17 @@ import { POSITION_SCALE } from './mesher'
  * 顶点颜色 = 贴图颜色 × 方向明暗 × AO（原版的 AO 是 0.4 / 0.6 / 0.8 / 1.0）。贴图每帧按时间重算（sky/formulas.ts），
  * 天黑不用重建网格。
  * 雾也改成原版的“圆柱形”：按水平距离和竖直距离里大的那个算，而不是按到相机平面的深度。
+ *
+ * v7.1 原版模型：纹理坐标不再按位置算，网格生成时按模型算好存进顶点（uv）；纹理数组后面接上资源包的纹理。
+ * 染色字段多了几个标记（见 models/index.ts）：资源包的纹理整张染色（不再用 alpha 标记），镂空的像素丢掉，
+ * 半透明的（水、冰）用纹理自己的 alpha；云杉、白桦树叶、睡莲是固定颜色（tintColors）。
  */
 
 /** 颜色图边长：世界坐标对它取模（视距 10 时可见范围约 21 个区块 = 336 格，放得下） */
 export const TINT_MAP_SIZE = 512
 
 const vertexShader = /* glsl */ `
-attribute vec4 info; // [面的方向, 纹理层, AO 等级（+4 不按方向变暗）, 染色种类]
+attribute vec4 info; // [面的方向, 纹理层, AO（0..255，+256 不按方向变暗）, 染色字段]
 attribute vec2 light; // [天空光之和, 方块光之和]，0..60
 
 uniform sampler2D lightMap;
@@ -51,26 +56,20 @@ const vec3 FACE_NORMAL[8] = vec3[8](vec3(-1, 0, 0), vec3(1, 0, 0), vec3(0, -1, 0
 
 // 原版 ClientLevel.getShade：西东 0.6、下 0.5、上 1.0、北南 0.8
 const float FACE_SHADE[8] = float[8](0.6, 0.6, 0.5, 1.0, 0.8, 0.8, 1.0, 1.0);
-const float AO_LEVEL[4] = float[4](0.4, 0.6, 0.8, 1.0);
 
 void main() {
   vec3 p = position / ${POSITION_SCALE.toFixed(1)};
   int face = int(info.x + 0.5);
 
-  // 纹理坐标：图片的第一行在上面，所以 v 取 -y
-  if (face == 0)      vUv = vec2( p.z, -p.y); // -x 面
-  else if (face == 1) vUv = vec2(-p.z, -p.y); // +x 面
-  else if (face == 4) vUv = vec2(-p.x, -p.y); // -z 面
-  else if (face == 5) vUv = vec2( p.x, -p.y); // +z 面
-  else if (face >= 6) vUv = vec2( p.x, -p.y); // 十字形植物的两片斜面（v5）：沿对角线，x 每格正好走一格
-  else                vUv = vec2( p.x,  p.z); // 顶面、底面
+  // 纹理坐标（v7.1 起顶点里直接存，网格生成时按原版模型算好；大于 1 的部分靠 RepeatWrapping 重复）
+  vUv = uv / ${UV_SCALE.toFixed(1)};
 
   vLayer = info.y;
   int ao = int(info.z + 0.5);
-  float shade = (ao & 4) != 0 ? (constantAmbient ? 0.9 : 1.0) : constantAmbient && (face == 2 || face == 3) ? 0.9 : FACE_SHADE[face];
+  float shade = (ao & 256) != 0 ? (constantAmbient ? 0.9 : 1.0) : constantAmbient && (face == 2 || face == 3) ? 0.9 : FACE_SHADE[face];
   // 原版 UV2 = 亮度 × 16，再除以 256：4 格之和 × 4 / 256
-  vec2 uv = clamp(vec2(light.y, light.x) / 64.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0));
-  vLight = texture(lightMap, uv).rgb * shade * AO_LEVEL[ao & 3];
+  vec2 luv = clamp(vec2(light.y, light.x) / 64.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0));
+  vLight = texture(lightMap, luv).rgb * shade * (float(ao & 255) / 255.0);
   vTint = info.w;
   // 往面的反方向挪一点点：侧面正好在两列的分界线上，要取“这个方块所在的那一列”的颜色
   vColumn = (modelMatrix * vec4(p - FACE_NORMAL[face] * 0.01, 1.0)).xz;
@@ -92,6 +91,7 @@ uniform sampler2DArray map;
 uniform sampler2D grassMap;
 uniform sampler2D foliageMap;
 uniform sampler2D waterMap;
+uniform vec3 tintColors[${TINT_COLORS.length}];
 uniform float opacity;
 
 uniform vec3 fogColor;
@@ -110,18 +110,19 @@ void main() {
   gl_FragColor = vec4(0.0, 0.0, 0.0, opacity);
 #else
   vec4 c = texture(map, vec3(vUv, floor(vLayer + 0.5)));
-  int kind = int(vTint + 0.5);
-  bool cutout = kind >= 4; // 镂空纹理（v5，十字形植物）：透明的像素丢掉，其余整张染色
-  if (cutout) {
-    if (c.a < 0.5) discard;
-    kind -= 4;
+  // 染色字段（见 models/index.ts）：低 5 位颜色，+32 镂空，+64 只染 alpha 标记的部分，+128 用纹理的 alpha
+  int t = int(vTint + 0.5);
+  int kind = t & 31;
+  if ((t & 32) != 0 && c.a < 0.5) discard;
+  if (kind > 0) {
+    vec3 tint;
+    if (kind <= 3) {
+      ivec2 col = ivec2(mod(floor(vColumn), ${TINT_MAP_SIZE}.0));
+      tint = kind == 1 ? texelFetch(grassMap, col, 0).rgb : kind == 2 ? texelFetch(foliageMap, col, 0).rgb : texelFetch(waterMap, col, 0).rgb;
+    } else tint = tintColors[kind - 4];
+    c.rgb = (t & 64) != 0 ? mix(c.rgb, c.rgb * tint, 1.0 - c.a) : c.rgb * tint; // alpha 越小染得越多（mipmap 时会是中间值）
   }
-  if (kind > 0 && (cutout || c.a < 0.999)) {
-    ivec2 col = ivec2(mod(floor(vColumn), ${TINT_MAP_SIZE}.0));
-    vec3 tint = kind == 1 ? texelFetch(grassMap, col, 0).rgb : kind == 2 ? texelFetch(foliageMap, col, 0).rgb : texelFetch(waterMap, col, 0).rgb;
-    c.rgb = cutout ? c.rgb * tint : mix(c.rgb, c.rgb * tint, 1.0 - c.a); // alpha 越小染得越多（mipmap 时会是中间值）
-  }
-  gl_FragColor = vec4(c.rgb * vLight, opacity);
+  gl_FragColor = vec4(c.rgb * vLight, (t & 128) != 0 ? c.a : opacity);
 #endif
   // 原版 linear_fog：fogNear 之前没有雾，fogFar 之后全是雾色
   float fog = clamp((vFogDist - fogNear) / (fogFar - fogNear), 0.0, 1.0);
@@ -142,6 +143,8 @@ function blockMaterial(opacity: number): THREE.ShaderMaterial {
         waterMap: { value: null },
         lightMap: { value: null },
         constantAmbient: { value: false },
+        // 直接用 0..1 的原始值（THREE.Color 会把十六进制颜色从 sRGB 换算成线性，这里不要）
+        tintColors: { value: TINT_COLORS.map((c) => new THREE.Vector3(((c >> 16) & 255) / 255, ((c >> 8) & 255) / 255, (c & 255) / 255)) },
         opacity: { value: opacity }
       }
     ]),
@@ -185,6 +188,13 @@ export default class Materials {
     this.wire.defines = { WIRE: '' }
     this.wire.wireframe = true
     this.wire.transparent = true
+  }
+
+  /** 换成“程序纹理 + 资源包纹理”的纹理数组（v7.1，资源包读完之后调用一次） */
+  setPackTextures(pixels: Uint8Array): void {
+    this.textures.dispose()
+    this.textures = createBlockTextures(pixels)
+    for (const m of [this.opaque, this.water]) m.uniforms.map.value = this.textures
   }
 
   /** 把一个区块的颜色（Worker 算好的 16×16×3 种×RGB）写进颜色图 */

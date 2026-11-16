@@ -10,3 +10,7 @@ datapacks/*
 
 # v6：从原版 jar 导出的每个方块状态的光照属性（tools/vanilla/gen-light.py），核对工具用
 tools/vanilla/out
+
+# v7.1：从你自己的客户端 jar 里拷出来的资源包（Mojang 版权，不要提交）
+resourcepacks/*
+!resourcepacks/README.md

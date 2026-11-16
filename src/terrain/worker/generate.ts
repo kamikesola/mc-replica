@@ -14,6 +14,7 @@ import type { Method, Params, RequestMessage, ResponseMessage, Result } from './
 import { generateChunk, meshChunk } from './surface'
 import { settleLeaves } from '../worldgen/feature/settle'
 import { gaussianSampleRgb } from '../../sky/formulas'
+import { setModels } from '../models'
 
 const ready: Promise<Worldgen> = loadPacks().then((packs) => new Worldgen(packs))
 
@@ -25,6 +26,11 @@ let settings: NoiseSettingsInfo | null = null
 type Handler<M extends Method> = (wg: Worldgen, p: Params<M>) => [Result<M>, Transferable[]]
 
 const handlers: { [M in Method]: Handler<M> } = {
+  models(_wg, p) {
+    setModels(p.models)
+    return [null, []]
+  },
+
   init(wg, p) {
     const seed = wg.setSeed(p.seed)
     const all = [...wg.settings.keys()]
@@ -67,11 +73,11 @@ const handlers: { [M in Method]: Handler<M> } = {
     settleLeaves(p.chunks, settings.height)
     const changes: number[] = []
     for (let i = 0; i < before.length; i++) if (before[i] !== p.chunks[4][i]) changes.push(i, p.chunks[4][i])
-    const r = { ...meshChunk(p.chunks, settings.height, hasSkyLight(settingsId), { greedy: p.greedy }), changes: Int32Array.from(changes) }
+    const r = { ...meshChunk(p.chunks, settings.height, hasSkyLight(settingsId), { greedy: p.greedy }, [p.cx * 16, settings.minY, p.cz * 16]), changes: Int32Array.from(changes) }
     const buffers: ArrayBufferLike[] = [r.light.buffer, r.changes.buffer]
     for (const m of r.meshes) {
       if (!m) continue
-      for (const part of [m.opaque, m.water]) buffers.push(part.positions.buffer, part.info.buffer, part.light.buffer, part.indices.buffer)
+      for (const part of [m.opaque, m.water]) buffers.push(part.positions.buffer, part.uv.buffer, part.info.buffer, part.light.buffer, part.indices.buffer)
     }
     return [{ ...r, ms: performance.now() - t0 }, buffers as Transferable[]]
   },

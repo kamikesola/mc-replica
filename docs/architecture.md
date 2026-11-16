@@ -86,11 +86,24 @@ Chunk（16×16×384）
 地物用字符串传状态（`minecraft:oak_log[axis=x]`，属性按名字排序，和原版存档一样），`WorldGenLevel.setBlock` 负责换成编号。
 区块和周围 8 个都生成后有一步“落定”（`worldgen/feature/settle.ts`，目前是树叶的 distance），在 Worker 的 `light` 里和光照一起做。
 
+## 方块模型（v7.1）
+
+有原版资源包（`resourcepacks/`）时，方块的样子来自原版模型：
+
+1. 主线程读资源包（`terrain/models/pack.ts`，只读用到的方块状态文件和它们引用的模型、parent），
+   烘焙成“每个状态 → 部分 → 带权重的候选 → 四边形”（`models/bakery.ts`），发给每个 Worker（Worker 方法 `models`）。
+2. 两边都调用 `setModels`（`models/index.ts`）生成网格要查的表：`USE_MODEL`、`OCCLUDES`（挡不挡邻居）、`SKIPS_SAME`、
+   `SPLIT`（每个候选拆成“能贪婪合并的整面”和“其他四边形”）、`FACE_LOOKS`（面的样子：纹理层、染色字段、纹理映射 M·D + c）。
+3. `meshSection`：整面照样贪婪合并；其他四边形逐个输出（`modelQuads`），平滑光照按顶点位置插值。
+   多候选的模型按世界坐标挑（`Mth.getSeed` + LegacyRandomSource，和原版一样），所以 `meshSection` 要知道 section 的世界坐标（`origin`）。
+
+纹理数组 = 程序画的纹理（v1~v7）+ 资源包的纹理。没有资源包、或者状态没有模型（箱子）时用 v7 的画法。
+
 ## 网格与材质（v1）
 
-- 一个 section 两个网格：不透明、水。每个顶点 12 字节：`position` Uint16×3（坐标 ×256）+ `info` Uint8×4（方向、纹理层、AO、染色）+ `light` Uint8×2（v6：天空光、方块光，各是 4 格之和）。
+- 一个 section 两个网格：不透明、半透明（水、冰）。每个顶点 20 字节（v7.1）：`position` Uint16×3（坐标 ×256）+ `uv` Int16×2（纹理坐标 ×256，v7.1）+ `info` Uint16×4（方向、纹理层、AO、染色字段）+ `light` Uint8×2（v6：天空光、方块光，各是 4 格之和）。
 - 光照（v6）：顶点着色器用 `light` 查 16×16 的光照贴图（每帧按时间更新），再乘方向明暗和 AO。雾是原版的圆柱形雾。
-- 所有方块共用一个 `ShaderMaterial`，纹理在一个 `DataArrayTexture` 里，纹理坐标和明暗在着色器里算。
+- 所有方块共用一个 `ShaderMaterial`，纹理在一个 `DataArrayTexture` 里。v7.1 之前纹理坐标在着色器里按位置算，之后顶点里直接存（模型的面可以转 90°、只用一小块纹理）。
 - 生物群系颜色（v4）：草、树叶、水的纹理是灰度的，要染色的像素 alpha = 0 作标记；着色器按世界 x, z 从三张 512×512 的颜色图（每列一个像素，按区块写入）取颜色相乘。网格不用为颜色重建。
 - 包围球写死为 section 的外接球（位置放大存储，three 自动算的不对）。
 

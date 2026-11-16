@@ -12,8 +12,18 @@ import { paintAll, TEX, TEXTURE_COUNT } from './painters'
  *
  * WebGL2 才有纹理数组，three.js r163 起本来就只支持 WebGL2，所以没有兼容性损失。
  */
-export function createBlockTextures(): THREE.DataArrayTexture {
-  const tex = new THREE.DataArrayTexture(paintAll(), TEX, TEX, TEXTURE_COUNT)
+export function createBlockTextures(extra?: Uint8Array): THREE.DataArrayTexture {
+  // v7.1：资源包的纹理接在程序画的纹理后面（层号见 models/index.ts 的 PACK_LAYER0）
+  const own = paintAll()
+  let data = own
+  let layers = TEXTURE_COUNT
+  if (extra) {
+    data = new Uint8Array(own.length + extra.length)
+    data.set(own)
+    data.set(extra, own.length)
+    layers += extra.length / (TEX * TEX * 4)
+  }
+  const tex = new THREE.DataArrayTexture(data, TEX, TEX, layers)
   tex.format = THREE.RGBAFormat
   tex.type = THREE.UnsignedByteType
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping

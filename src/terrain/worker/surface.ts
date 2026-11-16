@@ -306,7 +306,7 @@ export function generateChunk(wg: Worldgen, settingsId: string, s: NoiseSettings
  * 光照 + 网格（v6）：输入周围 3×3 个区块的最终方块（先 z 后 x），算出中心区块的光照，再生成它每个 section 的网格。
  * 区块要等它周围 8 个都生成好了才能做这一步——光会从邻居照过来，网格边上的面和亮度也要看邻居。
  */
-export function meshChunk(chunks: Uint16Array[], H: number, sky: boolean, opts: MeshOptions = {}): { light: Uint8Array; meshes: SectionMeshes[] } {
+export function meshChunk(chunks: Uint16Array[], H: number, sky: boolean, opts: MeshOptions = {}, origin: [number, number, number] = [0, 0, 0]): { light: Uint8Array; meshes: SectionMeshes[] } {
   const light = lightChunk(chunks, H, sky)
   const meshes: SectionMeshes[] = []
   const hood = new Uint16Array(N * N * N)
@@ -331,7 +331,7 @@ export function meshChunk(chunks: Uint16Array[], H: number, sky: boolean, opts: 
       }
     }
     fillLightHood(light, H, sy, sky, hoodLight)
-    const m = meshSection(hood, { ...opts, light: hoodLight })
+    const m = meshSection(hood, { ...opts, light: hoodLight, origin: [origin[0], origin[1] + sy * 16, origin[2]] })
     meshes.push(m.opaque.indices.length + m.water.indices.length > 0 ? m : null)
   }
   return { light, meshes }

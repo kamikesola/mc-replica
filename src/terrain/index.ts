@@ -9,6 +9,8 @@ import { fillLightHood } from './light/LightEngine'
 import { updateLight, type LightWorld } from './light/LightUpdater'
 import { meshSection, N, nIndex, POSITION_SCALE, type SectionMesh } from './mesh/mesher'
 import type { ChunkData, WorldInfo } from './worker/protocol'
+import { bakeAll, setModels } from './models'
+import { loadPackTextures, loadResourcePack } from './models/pack'
 import WorkerPool from './worker/pool'
 import { fixedTime } from '../sky/formulas'
 
@@ -86,12 +88,31 @@ export default class Terrain {
 
   /** 通知所有 Worker 换种子 / noise_settings，并清空现有区块 */
   async init(seed: string, settings: string): Promise<WorldInfo> {
+    await this.loadModels()
     this.edits.clear()
     this.fluids.clear()
     this.reload()
     this.info = await this.pool.broadcast('init', { seed, settings })
     this.fixedTime = fixedTime(this.info.settings)
     return this.info
+  }
+
+  /** 原版资源包（v7.1）：有就读进来、烘焙模型、做纹理数组，发给每个 Worker；只做一次 */
+  private modelsReady: Promise<void> | null = null
+  /** 用的是哪个资源包（F3 显示），没有是 null */
+  resourcePack: string | null = null
+  loadModels(): Promise<void> {
+    this.modelsReady ??= (async () => {
+      const pack = await loadResourcePack()
+      const models = pack ? bakeAll(pack.source) : null
+      setModels(models)
+      if (pack && models) {
+        this.materials.setPackTextures(await loadPackTextures(pack, models.textures))
+        this.resourcePack = pack.name
+      }
+      await this.pool.broadcast('models', { models })
+    })()
+    return this.modelsReady
   }
 
   /** 丢掉所有区块重新生成（玩家改动保留） */
@@ -180,7 +201,7 @@ export default class Terrain {
     const generation = this.generation
     c.lighting = true
     this.pool
-      .call('light', { chunks: nine.map((n) => n.flat), greedy: this.greedy })
+      .call('light', { chunks: nine.map((n) => n.flat), greedy: this.greedy, cx: c.cx, cz: c.cz })
       .then((r) => {
         c.lighting = false
         if (generation !== this.generation || this.chunks.get(`${c.cx},${c.cz}`) !== c) return
@@ -454,7 +475,7 @@ export default class Terrain {
     else c.staleSections.add(sy)
     const light = new Uint8Array(N * N * N)
     fillLightHood(c.light, c.height, sy, this.info!.hasSkyLight, light)
-    const m = meshSection(hood, { greedy: this.greedy, light })
+    const m = meshSection(hood, { greedy: this.greedy, light, origin: [c.cx * CHUNK_SIZE, c.minY + sy * 16, c.cz * CHUNK_SIZE] })
     this.setSectionMesh(c, sy, m.opaque.indices.length + m.water.indices.length > 0 ? m : null)
   }
 
@@ -492,6 +513,7 @@ export default class Terrain {
     if (a.indices.length === 0) return null
     const g = new THREE.BufferGeometry()
     g.setAttribute('position', new THREE.BufferAttribute(a.positions, 3))
+    g.setAttribute('uv', new THREE.BufferAttribute(a.uv, 2))
     g.setAttribute('info', new THREE.BufferAttribute(a.info, 4))
     g.setAttribute('light', new THREE.BufferAttribute(a.light, 2))
     g.setIndex(new THREE.BufferAttribute(a.indices, 1))
@@ -522,7 +544,7 @@ export default class Terrain {
         if (!m) continue
         sectionMeshes++
         const g = m.geometry
-        for (const a of [g.attributes.position, g.attributes.info, g.attributes.light, g.index!]) meshBytes += (a.array as Uint8Array).byteLength
+        for (const a of [g.attributes.position, g.attributes.uv, g.attributes.info, g.attributes.light, g.index!]) meshBytes += (a.array as Uint8Array).byteLength
         vertices += g.attributes.position.count
         quads += g.index!.count / 6
       }

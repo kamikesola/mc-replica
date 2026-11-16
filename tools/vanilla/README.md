@@ -87,6 +87,8 @@ STATES=1 npx tsx tools/vanilla/diff-areas.ts <full 存档> tools/vanilla/areas.t
                                                               # v7：同时比较完整状态（带属性），差别按状态列出
 npx tsx tools/vanilla/make-state-fixture.ts <full 存档> tools/vanilla/areas.txt tools/vanilla/areas51.txt
                                                               # v7：重新生成 tests/fixtures/states7.json
+python3 tools/vanilla/extract-assets.py <客户端 1.21.4.jar>
+                                                              # v7.1：方块模型和纹理 → resourcepacks/vanilla/（见 resourcepacks/README.md）
 ```
 
 `blocks.json` 是原版服务端的数据报告：`java -DbundlerMainClass=net.minecraft.data.Main -jar server.jar --reports`，

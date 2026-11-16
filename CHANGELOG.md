@@ -2,6 +2,55 @@
 
 每个版本对应一个 git tag 和一篇文章。数字来自 `tools/` 下的脚本或 `tests/` 里的测试，可以自己复现。
 
+## v7.1 · 方块模型
+
+文章：[docs/articles/v7.1-方块模型.md](docs/articles/v7.1-方块模型.md) · 日志：[docs/notes/v7.1-notes.md](docs/notes/v7.1-notes.md)
+
+**新增**
+
+- 原版资源包（`resourcepacks/vanilla/`，不进 git）：从自己的 1.21.4 客户端 jar 拷出 `blockstates/`、`models/block/`、`textures/block/`
+  （`tools/vanilla/extract-assets.py`，或手动拷，见 `resourcepacks/README.md`）。主线程按需读取（只读用到的方块和模型）
+- 模型烘焙（`terrain/models/bakery.ts`）：blockstates 的 variants / multipart（含 OR、AND）、parent 链（纹理合并、elements 取最近的）、
+  元素旋转（±22.5° / ±45°，rescale）、blockstate 的 x / y 旋转、uvlock、面的 uv 和 rotation、cullface 跟着旋转、tintindex、shade、
+  ambientocclusion；结果是普通对象，主线程烘焙一次发给每个 Worker（新的 Worker 方法 `models`）
+- 网格（`terrain/models/index.ts` + `mesh/mesher.ts`）：
+  - 模型里盖满整面的面照样贪婪合并：纹理映射写成 uv = M·D + c（M 是 90° 旋转 / 镜像），合并后的大矩形纹理照样一格一张
+  - 其他面逐个输出；不满一格的面的平滑光照按顶点位置双线性插值，面不贴边界时“中心”取方块自己（原版 ModelBlockRenderer）
+  - 多候选的模型（石头、泥土、沙子、草方块……的随机朝向）按 `Mth.getSeed` 挑，和原版 WeightedBakedModel / MultiPartBakedModel 一样
+  - 花草的随机偏移（原版 OffsetType XZ / XYZ）
+  - 遮挡按模型算：树叶、仙人掌、红树根等不挡住邻居（原版 noOcclusion），玻璃、冰和同种方块之间不画
+  - 半透明方块（冰、水）画进半透明网格，用纹理自己的 alpha
+- 染色按原版 BlockColors：草色、树叶色、水色，云杉 / 白桦树叶、睡莲的固定颜色
+- 纹理数组：程序画的纹理后面接资源包的纹理（308 张，动画纹理取第一帧）；没有模型的方块（箱子、末地折跃门）仍用程序纹理
+- F3：显示资源包
+- 测试：`tests/models.test.ts`（8 个，需要资源包）：烘焙完整、原木旋转、草方块的覆盖层、遮挡、随机候选、合并前后面积不变 + 三角形朝外 + 纹理不拉伸、植物、所有状态都能生成网格
+
+**改动**
+
+- 顶点格式：加 `uv`（Int16×2，纹理坐标 ×256，网格生成时算好）；`info` 改成 Uint16×4（纹理层可以超过 255；AO 存成 0..255，+256 = 不按方向变暗；
+  染色字段见 `models/index.ts`）；下标超过 65536 个顶点时用 Uint32。每个顶点 12 → 20 字节
+- 着色器不再按位置算纹理坐标；底面的纹理方向改成原版的（v 沿 -z）
+- `meshSection` 的选项加 `origin`（section 在世界里的位置）；Worker 的 `light` 参数加 `cx`、`cz`
+- 程序纹理也走“面的样子”表（`PROC_FACE`），没有资源包时画出来和 v7 一样
+
+**数字**（种子 42，主世界出生点，视距 6，121 个区块）
+
+| | v7 | v7.1（原版模型） |
+| --- | --- | --- |
+| 四边形 | 47.8 万 | 89.5 万 |
+| 网格显存 | 28.7 MB | 82.4 MB |
+| 一个区块的光照 + 网格 | 28 ms | 81 ms |
+
+多出来的四边形：树叶之间的面不再互相挡住（约一半）、草方块侧面的覆盖层、随机朝向让贪婪合并少合并一些（约 4%）。
+
+**已知问题**
+
+- 动画纹理不动；流体的侧面也用 still 纹理（原版用 flow）
+- uvlock 的面如果写了局部 uv（很少见），纹理位置和原版有出入
+- 两格高植物的随机候选按各自的位置挑（原版上半用下半的位置），偏移是一致的
+- 箱子、末地折跃门这些方块实体还是程序画的方块
+- 物品栏图标还是程序纹理
+
 ## v7 · 方块状态
 
 文章：[docs/articles/v7-方块状态.md](docs/articles/v7-方块状态.md) · 日志：[docs/notes/v7-notes.md](docs/notes/v7-notes.md)
@@ -30,7 +79,7 @@
 
 **已知问题**
 
-- 楼梯、台阶等形状、珊瑚扇、滴水石锥的模型还是旧的（v7.1 做 JSON 模型）
+- 楼梯、台阶等形状、珊瑚扇、滴水石锥的模型还是旧的（v7.1 已做 JSON 模型）
 - 约 1.4% 的树叶原版没有被方块刻更新，我们算的是更新后的值
 
 ## v6 · 光照与昼夜

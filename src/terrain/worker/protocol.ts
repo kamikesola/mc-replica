@@ -1,3 +1,4 @@
+import type { BakedModels } from '../models/bakery'
 import type { PalettedData } from '../chunk/PalettedContainer'
 import type { SectionMeshes } from './surface'
 
@@ -37,6 +38,8 @@ export interface ChunkData {
 }
 
 export interface Requests {
+  /** 装上原版资源包烘焙好的方块模型（v7.1，主线程烘焙一次发给每个 Worker）；null = 没有资源包 */
+  models: [{ models: BakedModels | null }, null]
   /** 设置种子和 noise_settings，返回世界信息 */
   init: [{ seed: string; settings: string }, WorldInfo]
   /** 生成一个区块的方块（v6 起不再顺便生成网格） */
@@ -45,7 +48,7 @@ export interface Requests {
    * 光照 + 网格（v6）：chunks 是周围 3×3 个区块的方块（先 z 后 x），返回中心区块 18×18 列的光照和每个 section 的网格。
    * greedy=false 时不合并面（对比用）
    */
-  light: [{ chunks: Uint16Array[]; greedy: boolean }, { light: Uint8Array; meshes: SectionMeshes[]; changes: Int32Array; ms: number }]
+  light: [{ chunks: Uint16Array[]; greedy: boolean; cx: number; cz: number }, { light: Uint8Array; meshes: SectionMeshes[]; changes: Int32Array; ms: number }]
   /** 天空和雾的颜色（v6）：玩家所在位置周围的生物群系 sky_color / fog_color 按原版 CubicSampler 平均 */
   skyColors: [{ x: number; y: number; z: number }, { sky: [number, number, number]; fog: [number, number, number] }]
   /** F3 调试屏的 NoiseRouter 一行 */

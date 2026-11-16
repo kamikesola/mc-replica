@@ -1,6 +1,7 @@
 import { BLOCK_BITS, BLOCK_BY_NAME, BlockType, NAME_BY_BLOCK } from '../blocks'
 import PalettedContainer, { type PalettedData } from '../chunk/PalettedContainer'
 import { meshSection, N, nIndex, type MeshOptions, type SectionMesh } from '../mesh/mesher'
+import { fillLightHood, lightChunk } from '../light/LightEngine'
 import { ChunkSource } from './pipeline'
 import type { CarveTarget } from '../worldgen/carver/Carver'
 import type { SurfaceInput } from '../worldgen/surface/SurfaceSystem'
@@ -170,6 +171,8 @@ export function protoChunk(wg: Worldgen, settingsId: string, s: NoiseSettingsInf
 export interface ChunkOptions extends MeshOptions {
   /** 放地物（v5，默认放）。false 时等于 v4 的结果 */
   features?: boolean
+  /** 生成网格（默认生成，没有光照、按白天露天算）。游戏里是 false：v6 起网格等光照算完再生成（meshChunk） */
+  mesh?: boolean
 }
 
 /** 每个 Worldgen 一个区块源（缓存原型和装饰结果） */
@@ -193,6 +196,7 @@ export function chunkSource(wg: Worldgen, settingsId: string, s: NoiseSettingsIn
  * 外面一圈来自邻居区块（原型 + 已经算出来的装饰），只用来判断“邻居是不是实心”。
  */
 export function generateChunk(wg: Worldgen, settingsId: string, s: NoiseSettingsInfo, cx: number, cz: number, opts: ChunkOptions = {}) {
+  const mesh = opts.mesh !== false
   const t0 = performance.now()
   const H = s.height
   const minY = s.minY
@@ -268,6 +272,10 @@ export function generateChunk(wg: Worldgen, settingsId: string, s: NoiseSettings
   const meshes: SectionMeshes[] = []
   const values = new Uint8Array(4096)
   const hood = new Uint8Array(N * N * N) // 18³ 邻域，给网格生成用
+  // 中间 16×16 列的最终方块（v6：主线程留一份不压缩的，算光照时发给 Worker）
+  const flat = new Uint8Array(16 * 16 * H)
+  for (let y = 0; y < H; y++)
+    for (let lz = 0; lz < 16; lz++) flat.set(padded.subarray((y * W + lz + PAD) * W + PAD, (y * W + lz + PAD) * W + PAD + 16), (y * 16 + lz) * 16)
   const at = (px: number, y: number, pz: number) => (y < minY || y >= minY + H ? BlockType.air : padded[pidx(px, y, pz)])
 
   for (let sy = 0; sy < sectionCount; sy++) {
@@ -279,8 +287,8 @@ export function generateChunk(wg: Worldgen, settingsId: string, s: NoiseSettings
     const container = PalettedContainer.fromValues(values, BLOCK_BITS)
     sections.push(container.toData())
 
-    // 整段都是空气：没有任何面，跳过网格
-    if (container.isSingle && container.palette[0] === BlockType.air) {
+    // 整段都是空气：没有任何面，跳过网格；v6 起网格在算完光照之后才生成（见 meshChunk），这里可以不生成
+    if (!mesh || (container.isSingle && container.palette[0] === BlockType.air)) {
       meshes.push(null)
       continue
     }
@@ -291,7 +299,42 @@ export function generateChunk(wg: Worldgen, settingsId: string, s: NoiseSettings
     meshes.push(m.opaque.indices.length + m.water.indices.length > 0 ? m : null)
   }
 
-  return { cx, cz, sections, meshes, fluidUpdates: Int32Array.from(fluidUpdates), tints, ms: performance.now() - t0 }
+  return { cx, cz, sections, blocks: flat, meshes, fluidUpdates: Int32Array.from(fluidUpdates), tints, ms: performance.now() - t0 }
+}
+
+/**
+ * 光照 + 网格（v6）：输入周围 3×3 个区块的最终方块（先 z 后 x），算出中心区块的光照，再生成它每个 section 的网格。
+ * 区块要等它周围 8 个都生成好了才能做这一步——光会从邻居照过来，网格边上的面和亮度也要看邻居。
+ */
+export function meshChunk(chunks: Uint8Array[], H: number, sky: boolean, opts: MeshOptions = {}): { light: Uint8Array; meshes: SectionMeshes[] } {
+  const light = lightChunk(chunks, H, sky)
+  const meshes: SectionMeshes[] = []
+  const hood = new Uint8Array(N * N * N)
+  const hoodLight = new Uint8Array(N * N * N)
+  const center = chunks[4]
+  for (let sy = 0; sy < H >> 4; sy++) {
+    // 整段空气：没有面
+    let empty = true
+    for (let i = sy * 4096; i < sy * 4096 + 4096 && empty; i++) if (center[i] !== BlockType.air) empty = false
+    if (empty) {
+      meshes.push(null)
+      continue
+    }
+    for (let ly = -1; ly <= 16; ly++) {
+      const y = sy * 16 + ly
+      for (let lz = -1; lz <= 16; lz++) {
+        const dz = lz < 0 ? 0 : lz > 15 ? 2 : 1
+        for (let lx = -1; lx <= 16; lx++) {
+          const dx = lx < 0 ? 0 : lx > 15 ? 2 : 1
+          hood[nIndex(lx, ly, lz)] = y < 0 || y >= H ? BlockType.air : chunks[dz * 3 + dx][(y * 16 + (lz & 15)) * 16 + (lx & 15)]
+        }
+      }
+    }
+    fillLightHood(light, H, sy, sky, hoodLight)
+    const m = meshSection(hood, { ...opts, light: hoodLight })
+    meshes.push(m.opaque.indices.length + m.water.indices.length > 0 ? m : null)
+  }
+  return { light, meshes }
 }
 
 /**

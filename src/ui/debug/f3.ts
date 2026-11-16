@@ -21,6 +21,24 @@ import { CHUNK_SIZE } from '../../terrain/chunk/Chunk'
 export default class F3 {
   el: HTMLElement
   visible = false
+  /** 原版 F3 的 "Client Light: 15 (15 sky, 0 block)"：脚下这一格 */
+  private lightLine(x: number, y: number, z: number): string {
+    const l = this.terrain.lightAt(x, y, z)
+    return l ? `Client Light: ${Math.max(l.sky, l.block)} (${l.sky} sky, ${l.block} block)` : 'Client Light: （区块还没点亮）'
+  }
+
+  /** 时间：第几天、几点（dayTime 0 是早上 6 点） */
+  private timeLine(): string {
+    const t = this.terrain.dayTime
+    const day = Math.floor(t / 24000)
+    const ticks = ((t % 24000) + 24000) % 24000
+    const minutes = Math.floor(((ticks / 1000 + 6) % 24) * 60)
+    const hh = String(Math.floor(minutes / 60)).padStart(2, '0')
+    const mm = String(minutes % 60).padStart(2, '0')
+    const fixed = this.terrain.fixedTime !== null ? `（这个维度的时间固定在 ${this.terrain.fixedTime}）` : this.terrain.daylightCycle ? '' : '（昼夜循环已关）'
+    return `时间: 第 ${day} 天 ${hh}:${mm}  dayTime ${t}${fixed}`
+  }
+
   /** 脚下的生物群系（Worker 算） */
   private biome = '…'
   private routerLine = ''
@@ -81,9 +99,9 @@ export default class F3 {
     const r = this.core.renderer.info.render
     const mb = (b: number) => (b / 1048576).toFixed(1) + ' MB'
     const lines = [
-      `mc-replica v5.2 (${fps} fps, 20 TPS)`,
+      `mc-replica v6 (${fps} fps, 20 TPS)`,
       `种子: ${info?.seed ?? '…'}    noise_settings: ${info?.settings ?? '…'}`,
-      `区块: ${st.loaded} 已加载, ${st.loading} 生成中, 上一个用时 ${this.terrain.lastChunkMs.toFixed(0)} ms, 挖/放重建 ${this.terrain.lastRemeshMs.toFixed(1)} ms`,
+      `区块: ${st.loaded} 已加载（${st.lit} 已点亮）, ${st.loading} 生成中, 上一个用时 ${this.terrain.lastChunkMs.toFixed(0)} ms, 光照+网格 ${this.terrain.lastLightMs.toFixed(0)} ms, 挖/放重建 ${this.terrain.lastRemeshMs.toFixed(1)} ms`,
       `方块数据: ${mb(st.bytes)}（v0 的存法要 ${mb(st.v0Bytes)}）`,
       `网格: ${this.terrain.greedy ? '贪婪' : '逐面'} [G]${this.terrain.materials.wireframe ? ' 线框' : ''} [K]  ${st.sectionMeshes} 个 section 网格, ${st.quads.toLocaleString()} 个四边形, ${mb(st.meshBytes)}`,
       `本帧: ${r.calls} 次绘制, ${r.triangles.toLocaleString()} 个三角形`,
@@ -94,6 +112,8 @@ export default class F3 {
       `Chunk: ${Math.floor(bx / CHUNK_SIZE)} ${Math.floor(bz / CHUNK_SIZE)}  (区块内 ${bx & 15} ${bz & 15})`,
       `Facing: ${this.control.facing}`,
       `Biome: ${this.biome}`,
+      this.lightLine(bx, by, bz),
+      this.timeLine(),
       `状态: ${this.control.player.state}${this.control.player.onGround ? '  落地' : ''}    速度: ${this.speed()}`,
       '',
       this.routerLine,

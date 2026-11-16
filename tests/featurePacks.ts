@@ -61,3 +61,10 @@ export function onlyPack(vanilla: PackInput, ids: string[]): PackInput {
   }
   return { name: 'only', files }
 }
+
+/** 没有地物、没有雕刻器（v6：和 make-world.py 的 bare 模式一样，原版的方块和我们逐格一致，光照对照用） */
+export function barePack(vanilla: PackInput): PackInput {
+  const files: Record<string, unknown> = {}
+  for (const [p, b] of biomes(vanilla)) files[`/bare/worldgen/biome/${p.split('/').pop()}`] = { ...b, carvers: [], features: [] }
+  return { name: 'bare', files }
+}

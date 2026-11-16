@@ -10,6 +10,7 @@ import { PerlinSimplexNoise } from '../noise/PerlinSimplexNoise'
  *   effects.water_color         水的颜色
  *   effects.grass_color / foliage_color          直接指定的草 / 树叶颜色（恶地、沼泽等）
  *   effects.grass_color_modifier                 "swamp"（两种绿色按噪声交替）/ "dark_forest"（偏暗）
+ * v6：effects.sky_color / fog_color             天空、雾的颜色（玩家周围的群系按 CubicSampler 平均）
  */
 export interface BiomeData {
   id: string
@@ -20,11 +21,13 @@ export interface BiomeData {
   grassColor?: number
   foliageColor?: number
   grassColorModifier: 'none' | 'swamp' | 'dark_forest'
+  skyColor: number
+  fogColor: number
 }
 
 /** 没有原版群系数据时的默认值（温度 0.8、湿度 0.4，和平原一样） */
 export function defaultBiome(id: string): BiomeData {
-  return { id, temperature: 0.8, downfall: 0.4, temperatureModifier: 'none', waterColor: 0x3f76e4, grassColorModifier: 'none' }
+  return { id, temperature: 0.8, downfall: 0.4, temperatureModifier: 'none', waterColor: 0x3f76e4, grassColorModifier: 'none', skyColor: 0x78a7ff, fogColor: 0xc0d8ff }
 }
 
 export function parseBiome(id: string, json: unknown): BiomeData {
@@ -38,7 +41,9 @@ export function parseBiome(id: string, json: unknown): BiomeData {
     waterColor: Number(effects.water_color ?? 0x3f76e4),
     grassColor: effects.grass_color === undefined ? undefined : Number(effects.grass_color),
     foliageColor: effects.foliage_color === undefined ? undefined : Number(effects.foliage_color),
-    grassColorModifier: effects.grass_color_modifier === 'swamp' ? 'swamp' : effects.grass_color_modifier === 'dark_forest' ? 'dark_forest' : 'none'
+    grassColorModifier: effects.grass_color_modifier === 'swamp' ? 'swamp' : effects.grass_color_modifier === 'dark_forest' ? 'dark_forest' : 'none',
+    skyColor: Number(effects.sky_color ?? 0x78a7ff),
+    fogColor: Number(effects.fog_color ?? 0xc0d8ff)
   }
 }
 

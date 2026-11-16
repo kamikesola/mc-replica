@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>mc-replica v5.2</title>
+    <title>mc-replica v6</title>
   </head>
   <body>
     <!-- 游戏画面（canvas）由 Core 插入到 body 里；下面是 UI，由 src/ui 控制 -->
@@ -29,6 +29,11 @@
             </select>
           </label>
           <label class="check"><input type="checkbox" id="bobbing" checked /> 视角摇晃</label>
+          <label>时间（刻，0 = 早上 6 点）<input type="range" id="timeInput" min="0" max="23999" step="100" value="0" /></label>
+          <label class="check"><input type="checkbox" id="daylightCycle" checked /> 昼夜循环</label>
+          <label>亮度
+            <select id="gamma"><option value="0">昏暗</option><option value="0.5" selected>默认</option><option value="1">明亮</option></select>
+          </label>
         </details>
 
         <div class="keys">

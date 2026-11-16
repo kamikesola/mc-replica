@@ -13,7 +13,7 @@ export default class Core {
   scene = new THREE.Scene()
   renderer = new THREE.WebGLRenderer({ antialias: false })
 
-  /** 天空颜色，雾也用它，远处的区块会自然“融”进天空 */
+  /** 天空颜色，雾也用它，远处的区块会自然“融”进天空（v6 起由 sky/ 每帧按时间算，这是初始值） */
   static SKY = 0x9cc4ff
 
   constructor() {
@@ -37,12 +37,12 @@ export default class Core {
   }
 
   initScene = () => {
-    this.scene.background = new THREE.Color(Core.SKY)
-    // 雾的距离在 Terrain 里按视距调整
+    // 雾的距离在 Terrain 里按视距调整。v6：不用 scene.background 了，清屏色由 sky/ 设置（先画天空再画地形）
     this.scene.fog = new THREE.Fog(Core.SKY, 40, 80)
   }
 
   initRenderer = () => {
+    this.renderer.autoClear = false
     this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     this.renderer.setSize(window.innerWidth, window.innerHeight)
@@ -54,21 +54,23 @@ export default class Core {
   }
 
   private viewBlocks = 96
-  /** 天空 / 雾的颜色（v5.2：下界、末地不一样） */
-  private sky = Core.SKY
+  /** 人在空气里时的雾（v6：颜色和范围每帧由 sky/ 按时间、群系、视距算出来） */
+  private air = { color: new THREE.Color(Core.SKY), near: 57.6, far: 96 }
+  medium: 'air' | 'water' | 'lava' = 'air'
 
-  /** 换天空色（原版下界用群系的 fog_color，这里按维度给一个固定值） */
-  setSky = (hex: number) => {
-    this.sky = hex
-    this.applyFog()
-  }
-  private medium: 'air' | 'water' | 'lava' = 'air'
-
-  /** 视距变了，雾也跟着变：在最后一圈区块处完全变成天空色 */
+  /** 视距变了：相机远平面跟着变（雾的范围由 sky/ 给） */
   setFogDistance = (blocks: number) => {
     this.viewBlocks = blocks
     this.camera.far = blocks + 64
     this.camera.updateProjectionMatrix()
+    this.applyFog()
+  }
+
+  /** 空气里的雾（v6，每帧）：原版 FogRenderer 的颜色和地形雾范围 */
+  setAirFog = (rgb: [number, number, number], near: number, far: number) => {
+    this.air.color.setRGB(...rgb)
+    this.air.near = near
+    this.air.far = far
     this.applyFog()
   }
 
@@ -82,9 +84,13 @@ export default class Core {
     this.applyFog()
   }
 
+  /** 当前的雾色，也是清屏色 */
+  get fogColor(): THREE.Color {
+    return (this.scene.fog as THREE.Fog).color
+  }
+
   private applyFog() {
     const fog = this.scene.fog as THREE.Fog
-    const bg = this.scene.background as THREE.Color
     if (this.medium === 'water') {
       fog.color.setHex(0x1f3f8f)
       fog.near = 2
@@ -94,10 +100,9 @@ export default class Core {
       fog.near = 0.25
       fog.far = 1.5
     } else {
-      fog.color.setHex(this.sky)
-      fog.near = this.viewBlocks * 0.6
-      fog.far = this.viewBlocks
+      fog.color.copy(this.air.color)
+      fog.near = this.air.near
+      fog.far = this.air.far
     }
-    bg.copy(fog.color)
   }
 }

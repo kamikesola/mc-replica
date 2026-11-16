@@ -11,11 +11,14 @@ import { type NoiseSettingsInfo, Worldgen } from '../worldgen'
 import { peaksAndValleys } from '../worldgen/density/peaksAndValleys'
 import { loadPacks } from './datapacks'
 import type { Method, Params, RequestMessage, ResponseMessage, Result } from './protocol'
-import { generateChunk } from './surface'
+import { generateChunk, meshChunk } from './surface'
+import { gaussianSampleRgb } from '../../sky/formulas'
 
 const ready: Promise<Worldgen> = loadPacks().then((packs) => new Worldgen(packs))
 
 let settingsId = ''
+/** 维度有没有天空光：noise_settings 是下界、末地的没有（原版 dimension_type 的 has_skylight） */
+const hasSkyLight = (id: string) => !/nether|end/.test(id)
 let settings: NoiseSettingsInfo | null = null
 
 type Handler<M extends Method> = (wg: Worldgen, p: Params<M>) => [Result<M>, Transferable[]]
@@ -38,6 +41,7 @@ const handlers: { [M in Method]: Handler<M> } = {
         minY: settings.minY,
         height: settings.height,
         seaLevel: settings.seaLevel,
+        hasSkyLight: hasSkyLight(settingsId),
         packs: wg.packs
       },
       []
@@ -46,15 +50,32 @@ const handlers: { [M in Method]: Handler<M> } = {
 
   chunk(wg, p) {
     if (!settings) throw new Error('还没有 init')
-    const r = generateChunk(wg, settingsId, settings, p.cx, p.cz, { greedy: p.greedy })
+    const r = generateChunk(wg, settingsId, settings, p.cx, p.cz, { mesh: false })
     // 所有数组的底层内存直接“转移”给主线程，不复制
-    const buffers: ArrayBufferLike[] = [r.fluidUpdates.buffer, r.tints.buffer]
+    const buffers: ArrayBufferLike[] = [r.fluidUpdates.buffer, r.tints.buffer, r.blocks.buffer]
     for (const s of r.sections) if (s.data) buffers.push(s.data.buffer)
+    const { meshes: _, ...data } = r
+    return [data, buffers as Transferable[]]
+  },
+
+  light(_wg, p) {
+    if (!settings) throw new Error('还没有 init')
+    const t0 = performance.now()
+    const r = meshChunk(p.chunks, settings.height, hasSkyLight(settingsId), { greedy: p.greedy })
+    const buffers: ArrayBufferLike[] = [r.light.buffer]
     for (const m of r.meshes) {
       if (!m) continue
-      for (const part of [m.opaque, m.water]) buffers.push(part.positions.buffer, part.info.buffer, part.indices.buffer)
+      for (const part of [m.opaque, m.water]) buffers.push(part.positions.buffer, part.info.buffer, part.light.buffer, part.indices.buffer)
     }
-    return [r, buffers as Transferable[]]
+    return [{ ...r, ms: performance.now() - t0 }, buffers as Transferable[]]
+  },
+
+  skyColors(wg, p) {
+    const biomes = wg.biomes(settingsId)
+    // 原版 ClientLevel.getSkyColor / FogRenderer：(位置 - 2) / 4 换成 quart 坐标，周围 6×6×6 个群系按高斯核加权
+    const at = (pick: (b: ReturnType<Worldgen['biome']>) => number) =>
+      gaussianSampleRgb((p.x - 2) * 0.25, (p.y - 2) * 0.25, (p.z - 2) * 0.25, (qx, qy, qz) => pick(wg.biome(biomes.noiseBiome(qx, qy, qz))))
+    return [{ sky: at((b) => b.skyColor), fog: at((b) => b.fogColor) }, []]
   },
 
   f3(wg, p) {

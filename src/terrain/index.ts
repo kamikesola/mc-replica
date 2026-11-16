@@ -5,9 +5,12 @@ import Section from './chunk/Section'
 import { FluidTicker } from './fluid/FluidTicker'
 import Highlight from './highlight'
 import Materials from './mesh/materials'
+import { fillLightHood } from './light/LightEngine'
+import { updateLight, type LightWorld } from './light/LightUpdater'
 import { meshSection, N, nIndex, POSITION_SCALE, type SectionMesh } from './mesh/mesher'
 import type { ChunkData, WorldInfo } from './worker/protocol'
 import WorkerPool from './worker/pool'
+import { fixedTime } from '../sky/formulas'
 
 export { BlockType } from './blocks'
 
@@ -25,6 +28,11 @@ export { BlockType } from './blocks'
  * v1 的变化：区块按 16³ 的 section 存储和画。挖一个方块只重建它周围的 section，而不是整根区块。
  * v3 的变化：水和岩浆会流动（fluid/FluidTicker.ts），由 tick() 每个游戏 tick 推进一次。
  * 方块改动先只记下“哪些 section 要重建”，每帧统一重建一次（流体一个 tick 可能改几百格）。
+ *
+ * v6 的变化：区块生成分两步。
+ *   1. 生成方块（Worker，'chunk'）：视距外再多生成一圈
+ *   2. 点亮 + 生成网格（Worker，'light'）：周围 8 个区块都生成好了才能做（光会从邻居照过来），做完才显示
+ * 之后挖放方块、流体流动，光照在主线程增量更新（light/LightUpdater.ts），亮度变了的 section 也重建网格。
  */
 export default class Terrain {
   scene: THREE.Scene
@@ -47,10 +55,21 @@ export default class Terrain {
 
   /** 世界信息（种子、高度、海平面……），init 之后才有 */
   info: WorldInfo | null = null
+  /**
+   * 游戏时间（v6）：刻，每个 tick +1，24000 一天。0 是早上 6 点（原版新世界从 0 开始）。
+   * 下界、末地的时间是固定的（fixedTime），这里的数照样走，但天空用固定值
+   */
+  dayTime = 0
+  /** 原版游戏规则 doDaylightCycle */
+  daylightCycle = true
+  /** 维度的固定时间（下界 18000、末地 6000），主世界 null */
+  fixedTime: number | null = null
   /** 最近一个区块的生成耗时，F3 里显示 */
   lastChunkMs = 0
   /** 最近一次主线程重建 section 网格的耗时 */
   lastRemeshMs = 0
+  /** 最近一个区块算光照 + 网格的耗时（v6） */
+  lastLightMs = 0
   /** 等待重建网格的 section（"cx,cz,sy"） */
   private dirty = new Set<string>()
   /** 流体流动（计划刻） */
@@ -71,6 +90,7 @@ export default class Terrain {
     this.fluids.clear()
     this.reload()
     this.info = await this.pool.broadcast('init', { seed, settings })
+    this.fixedTime = fixedTime(this.info.settings)
     return this.info
   }
 
@@ -110,22 +130,33 @@ export default class Terrain {
     this.materials.flushTints()
     const pcx = Math.floor(this.camera.position.x / CHUNK_SIZE)
     const pcz = Math.floor(this.camera.position.z / CHUNK_SIZE)
+    const inView = (cx: number, cz: number, extra: number) => (cx - pcx) ** 2 + (cz - pcz) ** 2 <= (this.distance + extra + 0.5) ** 2
 
-    // 卸载：比视距多一圈才卸，避免在边界来回走时反复加载
+    // 卸载：比生成范围（视距 + 1）再多一圈才卸，避免在边界来回走时反复加载
     for (const [key, c] of this.chunks) {
-      if (Math.max(Math.abs(c.cx - pcx), Math.abs(c.cz - pcz)) > this.distance + 1) {
+      if (Math.max(Math.abs(c.cx - pcx), Math.abs(c.cz - pcz)) > this.distance + 2) {
         c.dispose(this.scene)
         this.chunks.delete(key)
       }
     }
 
-    // 加载：每个 Worker 最多排 2 个任务，从离玩家最近的开始
+    // 每个 Worker 最多排 2 个任务。先算光照（便宜，算完就能显示），再生成新区块，都从离玩家最近的开始
     const maxInFlight = this.pool.size * 2
     if (this.pool.busy >= maxInFlight) return
+    const ready: [number, Chunk][] = []
+    for (const c of this.chunks.values()) {
+      if (c.light || c.lighting || !inView(c.cx, c.cz, 0)) continue
+      if (this.neighbors(c).every((n) => n)) ready.push([(c.cx - pcx) ** 2 + (c.cz - pcz) ** 2, c])
+    }
+    ready.sort((a, b) => a[0] - b[0])
+    for (const [, c] of ready.slice(0, maxInFlight - this.pool.busy)) this.relight(c)
+    if (this.pool.busy >= maxInFlight) return
+
     const wanted: [number, number, number][] = []
-    for (let dx = -this.distance; dx <= this.distance; dx++) {
-      for (let dz = -this.distance; dz <= this.distance; dz++) {
-        if (dx * dx + dz * dz > (this.distance + 0.5) ** 2) continue // 圆形视距
+    const r = this.distance + 1
+    for (let dx = -r; dx <= r; dx++) {
+      for (let dz = -r; dz <= r; dz++) {
+        if (!inView(pcx + dx, pcz + dz, 1)) continue // 圆形视距
         const key = `${pcx + dx},${pcz + dz}`
         if (!this.chunks.has(key) && !this.loading.has(key)) wanted.push([dx * dx + dz * dz, pcx + dx, pcz + dz])
       }
@@ -134,9 +165,75 @@ export default class Terrain {
     for (const [, cx, cz] of wanted.slice(0, maxInFlight - this.pool.busy)) this.load(cx, cz)
   }
 
+  /** 周围 8 个区块（先 z 后 x，不含自己）；没生成的是 undefined */
+  private neighbors(c: Chunk): (Chunk | undefined)[] {
+    const out: (Chunk | undefined)[] = []
+    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) if (dx || dz) out.push(this.chunks.get(`${c.cx + dx},${c.cz + dz}`))
+    return out
+  }
+
+  /** 点亮一个区块：把周围 3×3 的方块发给 Worker，算光照和网格（v6） */
+  private relight(c: Chunk): void {
+    const nine: Chunk[] = []
+    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) nine.push(this.chunks.get(`${c.cx + dx},${c.cz + dz}`)!)
+    const versions = nine.map((n) => n.version)
+    const generation = this.generation
+    c.lighting = true
+    this.pool
+      .call('light', { chunks: nine.map((n) => n.flat), greedy: this.greedy })
+      .then((r) => {
+        c.lighting = false
+        if (generation !== this.generation || this.chunks.get(`${c.cx},${c.cz}`) !== c) return
+        // 算的时候有方块变了（挖放方块、流体）：作废，下一帧重新算
+        if (nine.some((n, i) => n.version !== versions[i])) return
+        c.light = r.light
+        this.lastLightMs = r.ms
+        for (let sy = 0; sy < r.meshes.length; sy++) this.setSectionMesh(c, sy, r.meshes[sy])
+        this.syncBorders(c)
+      })
+      .catch((e) => {
+        c.lighting = false
+        console.error(`区块 ${c.cx},${c.cz} 光照失败`, e)
+      })
+  }
+
+  /**
+   * 刚点亮的区块：把它边上一圈的亮度抄给已经点亮的邻居（邻居的光照数组里存着这一圈的副本）。
+   * 一般两边算出来是一样的；邻居点亮之后这边的方块改过时才会不一样，那时邻居的网格也要重建
+   */
+  private syncBorders(c: Chunk): void {
+    for (const n of this.neighbors(c)) {
+      if (!n?.light) continue
+      const dx = c.cx - n.cx
+      const dz = c.cz - n.cz
+      const touched = new Set<number>()
+      for (let y = c.minY; y < c.minY + c.height; y++)
+        for (let lz = -1; lz <= 16; lz++)
+          for (let lx = -1; lx <= 16; lx++) {
+            // n 的局部坐标 (lx, lz) 落在 c 里的格子
+            const cx = lx - dx * 16
+            const cz = lz - dz * 16
+            if (cx < 0 || cx > 15 || cz < 0 || cz > 15) continue
+            const v = c.light![c.lightIndex(cx, y, cz)]
+            const i = n.lightIndex(lx, y, lz)
+            if (n.light[i] !== v) {
+              n.light[i] = v
+              touched.add(n.sectionIndex(y))
+            }
+          }
+      for (const sy of touched) for (const s of [sy - 1, sy, sy + 1]) if (s >= 0 && s < n.sections.length) this.dirty.add(`${n.cx},${n.cz},${s}`)
+    }
+  }
+
   /** 一个游戏 tick（由 Control 的 20 TPS 循环调用）：推进流体 */
   tick(): void {
     this.fluids.tick()
+    if (this.daylightCycle) this.dayTime++
+  }
+
+  /** 画面用的时间：固定时间的维度用固定值，否则在两个 tick 之间插值 */
+  renderTime(partialTick: number): number {
+    return this.fixedTime ?? this.dayTime + (this.daylightCycle ? partialTick : 0)
   }
 
   private load(cx: number, cz: number): void {
@@ -144,7 +241,7 @@ export default class Terrain {
     const generation = this.generation
     this.loading.add(key)
     this.pool
-      .call('chunk', { cx, cz, greedy: this.greedy }, regionAffinity(cx, cz))
+      .call('chunk', { cx, cz }, regionAffinity(cx, cz))
       .then((data) => {
         if (generation !== this.generation) return // 期间换了种子，结果作废
         this.loading.delete(key)
@@ -159,36 +256,21 @@ export default class Terrain {
   private onChunk(data: ChunkData): void {
     const info = this.info!
     const sections = data.sections.map((d) => Section.fromData(d))
-    const chunk = new Chunk(data.cx, data.cz, info.minY, info.height, sections)
+    const chunk = new Chunk(data.cx, data.cz, info.minY, info.height, sections, data.blocks)
     const key = `${data.cx},${data.cz}`
     this.chunks.set(key, chunk)
     this.lastChunkMs = data.ms
     this.materials.writeTints(data.cx, data.cz, data.tints)
 
+    // 玩家改过的方块写回去（网格、光照在点亮时一起算，这里不用管）
     const edits = this.edits.get(key)
-    if (edits && edits.size > 0) {
-      // 有玩家改动：先把改动写回去，再在主线程重新生成网格
-      const touched = new Set<number>()
+    if (edits)
       for (const [i, type] of edits) {
         const lx = i & 15
         const lz = (i >> 4) & 15
         const y = (i >> 8) + chunk.minY
         chunk.set(lx, y, lz, type)
-        touched.add(chunk.sectionIndex(y))
       }
-      for (let sy = 0; sy < sections.length; sy++) {
-        if (touched.has(sy) || touched.has(sy - 1) || touched.has(sy + 1)) this.remeshSection(chunk, sy)
-        else this.setSectionMesh(chunk, sy, data.meshes[sy])
-      }
-    } else {
-      for (let sy = 0; sy < sections.length; sy++) this.setSectionMesh(chunk, sy, data.meshes[sy])
-    }
-
-    // 旁边的区块里，有之前当成“这里是空气”重建过的 section：现在这里加载了，重新建一次
-    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
-      const n = this.chunks.get(`${data.cx + dx},${data.cz + dz}`)
-      if (n) for (const sy of n.staleSections) this.dirty.add(`${n.cx},${n.cz},${sy}`)
-    }
 
     // 含水层边上的水 / 岩浆：加载后马上更新一次，让它们流进旁边的洞里（原版的区块后处理）
     for (const i of data.fluidUpdates) {
@@ -238,7 +320,10 @@ export default class Terrain {
     const lx = x - c.cx * CHUNK_SIZE
     const lz = z - c.cz * CHUNK_SIZE
     if (y < this.info.minY || y >= this.info.minY + this.info.height) return false
+    const old = c.get(lx, y, lz)
     c.set(lx, y, lz, type)
+    // 光照（v6）：区块已经点亮了才增量更新；没点亮的，点亮时会用新的方块算
+    if (c.light && old !== type) updateLight(this.lightWorld, x, y, z, old, type)
 
     const key = `${c.cx},${c.cz}`
     if (!this.edits.has(key)) this.edits.set(key, new Map())
@@ -270,6 +355,69 @@ export default class Terrain {
     this.lastRemeshMs = performance.now() - t0
   }
 
+  /**
+   * 给光照增量更新用的世界接口（v6）。改一格亮度时，除了自己的区块，旁边已点亮的区块存的那一圈副本也要改，
+   * 并且所有“邻域里包含这一格”的 section 都要重建网格（平滑光照要看邻居的亮度）
+   */
+  private lightWorld: LightWorld = (() => {
+    let last: Chunk | undefined
+    const chunkAt = (x: number, z: number) => {
+      const cx = Math.floor(x / 16)
+      const cz = Math.floor(z / 16)
+      if (last && last.cx === cx && last.cz === cz && this.chunks.get(`${cx},${cz}`) === last) return last
+      return (last = this.chunks.get(`${cx},${cz}`))
+    }
+    const self = this
+    return {
+      get minY() {
+        return self.info!.minY
+      },
+      get maxY() {
+        return self.info!.minY + self.info!.height
+      },
+      get hasSky() {
+        return self.info!.hasSkyLight
+      },
+      block: (x, y, z) => chunkAt(x, z)?.get(x & 15, y, z & 15) ?? BlockType.air,
+      get: (x, y, z) => {
+        const c = chunkAt(x, z)
+        if (!c?.light || y < c.minY || y >= c.minY + c.height) return -1
+        return c.light[c.lightIndex(x & 15, y, z & 15)]
+      },
+      set: (x, y, z, v) => {
+        const c = chunkAt(x, z)
+        if (!c?.light) return
+        const lx = x & 15
+        const lz = z & 15
+        c.light[c.lightIndex(lx, y, lz)] = v
+        for (let dz = -1; dz <= 1; dz++)
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dz === 0) continue
+            const px = lx - dx * 16
+            const pz = lz - dz * 16
+            if (px < -1 || px > 16 || pz < -1 || pz > 16) continue
+            const n = this.chunks.get(`${c.cx + dx},${c.cz + dz}`)
+            if (n?.light) n.light[n.lightIndex(px, y, pz)] = v
+          }
+        for (let oz = -1; oz <= 1; oz++)
+          for (let ox = -1; ox <= 1; ox++)
+            for (let oy = -1; oy <= 1; oy++) {
+              const yy = y + oy
+              if (yy < c.minY || yy >= c.minY + c.height) continue
+              const n = chunkAt(x + ox, z + oz)
+              if (n?.light) this.dirty.add(`${n.cx},${n.cz},${n.sectionIndex(yy)}`)
+            }
+      }
+    }
+  })()
+
+  /** 一格的天空光、方块光（F3 用）；区块没点亮时返回 null */
+  lightAt(x: number, y: number, z: number): { sky: number; block: number } | null {
+    const v = this.lightWorld.get(x, y, z)
+    if (v < 0) return y >= (this.info?.minY ?? 0) + (this.info?.height ?? 0) && this.getChunk(x, z)?.light ? { sky: this.info!.hasSkyLight ? 15 : 0, block: 0 } : null
+    return { sky: v & 15, block: v >> 4 }
+  }
+
   /** 某一列最高的实心方块的 y；没加载时返回 null */
   topSolidY(x: number, z: number): number | null {
     const c = this.getChunk(x, z)
@@ -298,10 +446,13 @@ export default class Terrain {
 
   /** 在主线程重建一个 section 的网格 */
   remeshSection(c: Chunk, sy: number): void {
+    if (!c.light) return // 还没点亮的区块没有网格，点亮时一起生成
     const hood = new Uint8Array(N * N * N)
     if (this.fillNeighborhood(c, sy, hood)) c.staleSections.delete(sy)
     else c.staleSections.add(sy)
-    const m = meshSection(hood, { greedy: this.greedy })
+    const light = new Uint8Array(N * N * N)
+    fillLightHood(c.light, c.height, sy, this.info!.hasSkyLight, light)
+    const m = meshSection(hood, { greedy: this.greedy, light })
     this.setSectionMesh(c, sy, m.opaque.indices.length + m.water.indices.length > 0 ? m : null)
   }
 
@@ -340,6 +491,7 @@ export default class Terrain {
     const g = new THREE.BufferGeometry()
     g.setAttribute('position', new THREE.BufferAttribute(a.positions, 3))
     g.setAttribute('info', new THREE.BufferAttribute(a.info, 4))
+    g.setAttribute('light', new THREE.BufferAttribute(a.light, 2))
     g.setIndex(new THREE.BufferAttribute(a.indices, 1))
     // 位置是放大 16 倍存的，three 自己算出来的包围球会大 16 倍。
     // 一个 section 就是 16³ 的立方体，包围球直接写死（视锥剔除用它判断这个 section 在不在屏幕里）
@@ -368,14 +520,17 @@ export default class Terrain {
         if (!m) continue
         sectionMeshes++
         const g = m.geometry
-        for (const a of [g.attributes.position, g.attributes.info, g.index!]) meshBytes += (a.array as Uint8Array).byteLength
+        for (const a of [g.attributes.position, g.attributes.info, g.attributes.light, g.index!]) meshBytes += (a.array as Uint8Array).byteLength
         vertices += g.attributes.position.count
         quads += g.index!.count / 6
       }
     }
     const height = this.info?.height ?? 0
+    let lit = 0
+    for (const c of this.chunks.values()) if (c.light) lit++
     return {
       loaded: this.chunks.size,
+      lit,
       loading: this.loading.size,
       /** 方块数据（调色板压缩后） */
       bytes,

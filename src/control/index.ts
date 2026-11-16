@@ -53,6 +53,10 @@ export default class Control {
 
   /** 还没跑掉的时间（秒），满 1 tick 就跑一次 */
   private acc = 0
+  /** 两个 tick 之间走到哪儿了（0..1），画面插值用（v6：时间也按它插值，太阳动得平滑） */
+  get partialTick(): number {
+    return this.acc / PHYSICS.TICK
+  }
   /** 眼高：切换站 / 蹲时每 tick 走一半，看起来是平滑蹲下（原版 Camera.tick） */
   private eye = 1.62
   private prevEye = 1.62

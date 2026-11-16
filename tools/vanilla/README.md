@@ -71,10 +71,28 @@ npx tsx tools/vanilla/make-full-fixture.ts <full 存档> tools/vanilla/areas51.t
 python3 tools/vanilla/gen-tags.py <解包的 jar 目录>          # v5.1：从原版 jar 展开方块标签，写 blockTags.json
 npx tsx tools/vanilla/structures-to-json.ts <jar 里的 data/minecraft/structure> datapacks/vanilla/structure
                                                               # v5.2：化石的结构模板（.nbt → JSON）
+python3 tools/vanilla/gen-light.py <server-1.21.4.jar> <libraries 目录>
+                                                              # v6：每个方块的光照属性 → src/terrain/light/lightProps.json，
+                                                              #     完整的状态表 → tools/vanilla/out/light-states.tsv（不进 git）
+npx tsx tools/vanilla/diff-light.ts <bare 存档> --range -3 -3 2 2 --bare
+                                                              # v6：天空光、方块光逐格比较（bare 存档要加 --bare）
+npx tsx tools/vanilla/diff-light.ts <full 存档> --vanilla-blocks --areas tools/vanilla/areas51.txt tools/vanilla/areas.txt
+                                                              # v6：用原版存档里的方块算，只检验光照引擎；去掉 --vanilla-blocks 是端到端
+npx tsx tools/vanilla/make-light-fixture.ts <bare 存档> <bare52 存档>
+                                                              # v6：重新生成 tests/fixtures/light6.json
 ```
+
+`gen-light.py` 要的 jar 是 bundler 里面那个真正的服务端（`META-INF/versions/1.21.4/server-1.21.4.jar`），
+libraries 是 bundler 运行一次后解出来的 `libraries/` 目录。它会编译 `LightDump.java` 并直接调用原版的类
+（混淆名写在 Java 文件的注释里），所以需要 JDK。
+
+原版存档里的光照偶尔是“没算完”的（保存时还有光照更新在排队）：`diff-light.ts` 会检查每格是否满足
+“亮度 = max(光源, 邻居 − 代价)”，不满足的标成“原版没算完”，并给出去掉这些区块之后的一致率。
 
 ## 4. 查原版代码
 
 server.jar 里的类名是混淆过的。用 JSON 里出现的字符串（比如 `mangrove_root_placement`）在解压出来的 class 文件里找，
 再用 `javap -c -p 类名.class` 看字节码。v5 用这个办法确认了红树根放置器和 `Mth.sin` 的细节；
 v5.1 用它核对了几乎每个新地物的随机数顺序（地物名在 `Feature` 注册类里，和 `new 类名` 挨着，可以批量对应）。
+v6 的光照：`esr` = LightEngine、`est` = SkyLightEngine、`esi` = BlockLightEngine、`esk` = ChunkSkyLightSources、
+`dwx` = BlockBehaviour（`i_` 是 getLightBlock 的默认实现、`e_` 是 propagatesSkylightDown）。

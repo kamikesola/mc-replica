@@ -20,26 +20,38 @@ import { POSITION_SCALE } from './mesher'
  * v4 加了生物群系染色：草、树叶、水的纹理是灰色的（alpha 为 0 的像素表示“要染色”），
  * 颜色从三张 512×512 的“颜色图”里按世界坐标 (x, z) 取 —— 每一列一个颜色，区块加载时由 Worker 算好写进去。
  * 按坐标取而不是存在顶点里，是因为贪婪网格合并出的大矩形横跨好几个群系，顶点只有 4 个，存不下每一列的颜色。
+ *
+ * v6 光照：顶点带着天空光、方块光（4 格之和，见 mesher.ts），在顶点着色器里查 16×16 的“光照贴图”得到颜色
+ * （原版 minecraft_sample_lightmap：贴图线性过滤，坐标 = 亮度 / 16，夹在 0.5/16 ~ 15.5/16 之间——
+ * 所以亮度 n 实际取的是第 n−1 和第 n 格的平均，原版就是这样）。
+ * 顶点颜色 = 贴图颜色 × 方向明暗 × AO（原版的 AO 是 0.4 / 0.6 / 0.8 / 1.0）。贴图每帧按时间重算（sky/formulas.ts），
+ * 天黑不用重建网格。
+ * 雾也改成原版的“圆柱形”：按水平距离和竖直距离里大的那个算，而不是按到相机平面的深度。
  */
 
 /** 颜色图边长：世界坐标对它取模（视距 10 时可见范围约 21 个区块 = 336 格，放得下） */
 export const TINT_MAP_SIZE = 512
 
 const vertexShader = /* glsl */ `
-attribute vec4 info; // [面的方向, 纹理层, AO 等级, 染色种类]
+attribute vec4 info; // [面的方向, 纹理层, AO 等级（+4 不按方向变暗）, 染色种类]
+attribute vec2 light; // [天空光之和, 方块光之和]，0..60
+
+uniform sampler2D lightMap;
+/** 原版 constantAmbientLight（下界）：上下两面都是 0.9 */
+uniform bool constantAmbient;
 
 varying vec2 vUv;
 varying float vLayer;
-varying float vLight;
+varying vec3 vLight;
 varying vec2 vColumn; // 世界坐标 (x, z)，取生物群系颜色用
 varying float vTint;
+varying float vFogDist;
 
 const vec3 FACE_NORMAL[8] = vec3[8](vec3(-1, 0, 0), vec3(1, 0, 0), vec3(0, -1, 0), vec3(0, 1, 0), vec3(0, 0, -1), vec3(0, 0, 1), vec3(0), vec3(0));
 
-#include <fog_pars_vertex>
-
-const float FACE_SHADE[8] = float[8](0.6, 0.6, 0.5, 1.0, 0.8, 0.8, 0.85, 0.85);
-const float AO_LEVEL[4] = float[4](0.5, 0.68, 0.84, 1.0);
+// 原版 ClientLevel.getShade：西东 0.6、下 0.5、上 1.0、北南 0.8
+const float FACE_SHADE[8] = float[8](0.6, 0.6, 0.5, 1.0, 0.8, 0.8, 1.0, 1.0);
+const float AO_LEVEL[4] = float[4](0.4, 0.6, 0.8, 1.0);
 
 void main() {
   vec3 p = position / ${POSITION_SCALE.toFixed(1)};
@@ -54,7 +66,11 @@ void main() {
   else                vUv = vec2( p.x,  p.z); // 顶面、底面
 
   vLayer = info.y;
-  vLight = FACE_SHADE[face] * AO_LEVEL[int(info.z + 0.5)];
+  int ao = int(info.z + 0.5);
+  float shade = (ao & 4) != 0 ? (constantAmbient ? 0.9 : 1.0) : constantAmbient && (face == 2 || face == 3) ? 0.9 : FACE_SHADE[face];
+  // 原版 UV2 = 亮度 × 16，再除以 256：4 格之和 × 4 / 256
+  vec2 uv = clamp(vec2(light.y, light.x) / 64.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0));
+  vLight = texture(lightMap, uv).rgb * shade * AO_LEVEL[ao & 3];
   vTint = info.w;
   // 往面的反方向挪一点点：侧面正好在两列的分界线上，要取“这个方块所在的那一列”的颜色
   vColumn = (modelMatrix * vec4(p - FACE_NORMAL[face] * 0.01, 1.0)).xz;
@@ -64,7 +80,9 @@ void main() {
 #ifdef WIRE
   gl_Position.z -= 0.0004 * gl_Position.w; // 线框往相机方向挪一点点，避免和表面抢深度而闪烁
 #endif
-  #include <fog_vertex>
+  // 原版 FogShape.CYLINDER：max(水平距离, 竖直距离)
+  vec3 d = (modelMatrix * vec4(p, 1.0)).xyz - cameraPosition;
+  vFogDist = max(length(d.xz), abs(d.y));
 }
 `
 
@@ -76,13 +94,16 @@ uniform sampler2D foliageMap;
 uniform sampler2D waterMap;
 uniform float opacity;
 
+uniform vec3 fogColor;
+uniform float fogNear;
+uniform float fogFar;
+
 varying vec2 vUv;
 varying float vLayer;
-varying float vLight;
+varying vec3 vLight;
 varying vec2 vColumn;
 varying float vTint;
-
-#include <fog_pars_fragment>
+varying float vFogDist;
 
 void main() {
 #ifdef WIRE
@@ -102,7 +123,9 @@ void main() {
   }
   gl_FragColor = vec4(c.rgb * vLight, opacity);
 #endif
-  #include <fog_fragment>
+  // 原版 linear_fog：fogNear 之前没有雾，fogFar 之后全是雾色
+  float fog = clamp((vFogDist - fogNear) / (fogFar - fogNear), 0.0, 1.0);
+  gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, fog);
 }
 `
 
@@ -112,7 +135,15 @@ function blockMaterial(opacity: number): THREE.ShaderMaterial {
     fragmentShader,
     uniforms: THREE.UniformsUtils.merge([
       THREE.UniformsLib.fog,
-      { map: { value: null }, grassMap: { value: null }, foliageMap: { value: null }, waterMap: { value: null }, opacity: { value: opacity } }
+      {
+        map: { value: null },
+        grassMap: { value: null },
+        foliageMap: { value: null },
+        waterMap: { value: null },
+        lightMap: { value: null },
+        constantAmbient: { value: false },
+        opacity: { value: opacity }
+      }
     ]),
     fog: true // 让 three 每帧把场景的雾参数填进 uniforms
   })
@@ -131,6 +162,8 @@ export default class Materials {
   /** 生物群系颜色图：草、树叶、水（v4） */
   tintMaps = [0x91bd59, 0x77ab2f, 0x3f76e4].map((c) => createTintMap(c))
   private tintsDirty = false
+  /** 光照贴图 16×16（v6）：横轴方块光、纵轴天空光，线性过滤（和原版一样，亮度落在两格之间时取平均） */
+  lightMap = createLightMap()
 
   constructor() {
     this.opaque = blockMaterial(1)
@@ -144,9 +177,11 @@ export default class Materials {
       m.uniforms.grassMap.value = this.tintMaps[0]
       m.uniforms.foliageMap.value = this.tintMaps[1]
       m.uniforms.waterMap.value = this.tintMaps[2]
+      m.uniforms.lightMap.value = this.lightMap
     }
 
     this.wire = blockMaterial(0.6)
+    this.wire.uniforms.lightMap.value = this.lightMap
     this.wire.defines = { WIRE: '' }
     this.wire.wireframe = true
     this.wire.transparent = true
@@ -172,6 +207,18 @@ export default class Materials {
     this.tintsDirty = true
   }
 
+  /** 换光照贴图（v6，每帧）：rgb 是 16×16×3 字节，下标 (天空光 * 16 + 方块光) * 3 */
+  setLightmap(rgb: Uint8Array, constantAmbient: boolean): void {
+    const data = this.lightMap.image.data as Uint8Array
+    for (let i = 0; i < 256; i++) {
+      data[i * 4] = rgb[i * 3]
+      data[i * 4 + 1] = rgb[i * 3 + 1]
+      data[i * 4 + 2] = rgb[i * 3 + 2]
+    }
+    this.lightMap.needsUpdate = true
+    for (const m of [this.opaque, this.water, this.wire]) m.uniforms.constantAmbient.value = constantAmbient
+  }
+
   /** 每帧最多上传一次颜色图 */
   flushTints(): void {
     if (!this.tintsDirty) return
@@ -191,6 +238,15 @@ function createTintMap(color: number): THREE.DataTexture {
   }
   const t = new THREE.DataTexture(data, N, N, THREE.RGBAFormat, THREE.UnsignedByteType)
   t.magFilter = t.minFilter = THREE.NearestFilter
+  t.needsUpdate = true
+  return t
+}
+
+function createLightMap(): THREE.DataTexture {
+  const data = new Uint8Array(16 * 16 * 4).fill(255)
+  const t = new THREE.DataTexture(data, 16, 16, THREE.RGBAFormat, THREE.UnsignedByteType)
+  t.magFilter = t.minFilter = THREE.LinearFilter
+  t.generateMipmaps = false
   t.needsUpdate = true
   return t
 }

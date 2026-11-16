@@ -2,6 +2,40 @@
 
 每个版本对应一个 git tag 和一篇文章。数字来自 `tools/` 下的脚本或 `tests/` 里的测试，可以自己复现。
 
+## v6 · 光照与昼夜
+
+文章：[docs/articles/v6-光照与昼夜.md](docs/articles/v6-光照与昼夜.md) · 日志：[docs/notes/v6-notes.md](docs/notes/v6-notes.md)
+
+**新增**
+
+- 光照引擎（`terrain/light/LightEngine.ts`）：天空光、方块光，移植自原版 SkyLightEngine / BlockLightEngine；
+  雪层、下半台阶等底面挡光。每个方块的 lightBlock / lightEmission 从原版 jar 导出（`tools/vanilla/LightDump.java`、`gen-light.py`）
+- 增量更新（`terrain/light/LightUpdater.ts`）：挖放方块、流体流动后只更新附近的光照（先熄灭再点亮）
+- 区块加载分两步：Worker 先生成方块，周围 8 个区块都生成后再算“光照 + 网格”（新的 Worker 方法 `light`），算完才显示；生成范围是视距 + 1。
+  主线程每个区块多存一份不压缩的方块（`Chunk.flat`）和 18×18 列的光照（`Chunk.light`）
+- 原版的平滑光照：每个角 4 格亮度之和存进顶点（新属性 `light`）；AO 改成原版的 0.4 / 0.6 / 0.8 / 1.0；
+  发光方块、十字形植物、流体用 flat 光照；十字形植物、藤蔓不按方向变暗；下界上下两面 0.9（constantAmbientLight）
+- 光照贴图（`sky/formulas.ts`）：照抄 1.21.4 的 lightmap.fsh，每帧按时间更新；亮度选项（昏暗 / 默认 / 明亮）
+- 昼夜（`sky/`）：时间流逝（20 刻 / 秒，24000 一天）；天空色、雾色（群系 sky_color / fog_color 按 CubicSampler 平均，Worker 方法 `skyColors`）；
+  日出日落扇形；太阳、8 个月相的月亮、780 颗星星（种子 10842）；下界、末地固定时间
+- 雾：原版的圆柱形雾，范围是视距的最后 1/10（下界从 5% 开始）
+- F3：`Client Light`、时间、点亮的区块数、光照 + 网格耗时；菜单：时间滑块、昼夜循环开关、亮度
+- 工具：`diff-light.ts`（和原版存档的 SkyLight / BlockLight 逐格比较，`--vanilla-blocks` 只检验引擎，标出原版自己没算完的格子）、
+  `make-light-fixture.ts`；`anvil.ts` 读光照数组
+- 测试：`tests/light.test.ts`（10 个）：属性表、小场景、增量更新 = 整块重算（随机 300 次）、平滑光照、和原版 bare 存档逐格对照（三个维度）、昼夜公式
+
+**改动**
+
+- `generateChunk` 默认仍生成网格（测试、工具用），游戏里传 `mesh: false`
+- `ChunkData` 去掉 `meshes`，加上 `blocks`（不压缩的方块）；`chunk` 请求不再带 `greedy`
+- 不再用 `scene.background`：先画天空（单独的场景和相机），清深度再画地形；`Core.setSky` 换成 `setAirFog`
+
+**已知问题**
+
+- 和方块状态有关的发光（洞穴藤蔓的浆果、海泡菜个数、被碰到的红石矿石）、含水方块的挡光要等 v7
+- 没有云和天气；末地天空是纯色
+- 光照算到一半方块变了会作废重算，流体一直在流的地方旁边的区块可能晚一点才显示
+
 ## v5.2 · 下界、末地与收尾
 
 文章：[docs/articles/v5.2-下界、末地与收尾.md](docs/articles/v5.2-下界、末地与收尾.md) · 日志：[docs/notes/v5.2-notes.md](docs/notes/v5.2-notes.md)

@@ -7,3 +7,6 @@ tools/parity/out
 # 从你自己的客户端 jar 里解出来的原版数据（Mojang 版权，不要提交）
 datapacks/*
 !datapacks/README.md
+
+# v6：从原版 jar 导出的每个方块状态的光照属性（tools/vanilla/gen-light.py），核对工具用
+tools/vanilla/out

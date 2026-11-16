@@ -1,4 +1,4 @@
-# 架构说明（v5.2）
+# 架构说明（v6）
 
 ## 整体：和原项目一样，一个模块一个类
 
@@ -41,16 +41,28 @@ terrain.init(seed, settings)                          // 让 Worker 换种子
    │ 2.5 每一列草 / 树叶 / 水的颜色：周围 5×5 列的生物群系颜色取平均，随区块一起传回主线程
    │ 3. 每 16 层切一个 section：
    │    PalettedContainer.fromValues()    ← terrain/chunk（调色板 + 位压缩）
-   │    meshSection() 贪婪网格             ← terrain/mesh/mesher.ts
    ▼
- { sections[24], meshes[24] }  （ArrayBuffer 直接转移，不复制）
+ { sections[24], blocks（不压缩）, tints }  （ArrayBuffer 直接转移，不复制）
    ▼
  Terrain.onChunk()                         主线程
-   │ 还原成 Section，每个 section 生成一个 THREE.Mesh 加进场景
-   │ 如果这个区块被玩家改过（edits），先写回改动再在主线程重建涉及的 section
+   │ 还原成 Section，留一份不压缩的 flat；被玩家改过（edits）的写回去
+   ▼
+ Terrain.update()：周围 8 个区块都生成好了？（v6）
+   ▼
+ WorkerPool.call('light', {chunks: 3×3 份 flat})
+   ▼
+ generate.ts → meshChunk()                terrain/worker/surface.ts
+   │ lightChunk()：3×3 个区块一起算天空光、方块光   ← terrain/light/LightEngine.ts
+   │ meshSection() 贪婪网格 + 平滑光照              ← terrain/mesh/mesher.ts
+   ▼
+ { light（18×18 列）, meshes[24] }
+   ▼
+ Terrain：每个 section 生成一个 THREE.Mesh 加进场景；算的时候方块变了就作废重来
 ```
 
-挖 / 放方块时：`Control` 用射线找到方块 → `Terrain.setBlock()` 改 section、记进 `edits` → 在主线程重建这个方块周围 3×3×3 涉及的 section（1~8 个，可能跨区块）。
+挖 / 放方块时：`Control` 用射线找到方块 → `Terrain.setBlock()` 改 section、记进 `edits` → 光照增量更新（`light/LightUpdater.ts`，v6）→ 在主线程重建这个方块周围 3×3×3、以及亮度变了的格子周围涉及的 section（可能跨区块）。
+
+每帧（v6）：`Sky.update()` 按时间算光照贴图、天空色、雾色 → 先用单独的相机画天空（清屏色 = 雾色）→ 清深度 → 画地形。
 
 ## 区块的存储（v1）
 
@@ -68,7 +80,8 @@ Chunk（16×16×384）
 
 ## 网格与材质（v1）
 
-- 一个 section 两个网格：不透明、水。每个顶点 10 字节：`position` Uint16×3（坐标 ×16）+ `info` Uint8×4（方向、纹理层、AO）。
+- 一个 section 两个网格：不透明、水。每个顶点 12 字节：`position` Uint16×3（坐标 ×256）+ `info` Uint8×4（方向、纹理层、AO、染色）+ `light` Uint8×2（v6：天空光、方块光，各是 4 格之和）。
+- 光照（v6）：顶点着色器用 `light` 查 16×16 的光照贴图（每帧按时间更新），再乘方向明暗和 AO。雾是原版的圆柱形雾。
 - 所有方块共用一个 `ShaderMaterial`，纹理在一个 `DataArrayTexture` 里，纹理坐标和明暗在着色器里算。
 - 生物群系颜色（v4）：草、树叶、水的纹理是灰度的，要染色的像素 alpha = 0 作标记；着色器按世界 x, z 从三张 512×512 的颜色图（每列一个像素，按区块写入）取颜色相乘。网格不用为颜色重建。
 - 包围球写死为 section 的外接球（位置放大存储，three 自动算的不对）。
@@ -77,26 +90,31 @@ Chunk（16×16×384）
 
 | 目录 | 文件 | 职责 |
 | --- | --- | --- |
-| `core/` | `index.ts` | 场景、相机、渲染器、雾 |
+| `core/` | `index.ts` | 场景、相机、渲染器、雾（空气里的雾由 sky/ 每帧给） |
+| `sky/` | `formulas.ts` | 昼夜和光照贴图的公式（v6）：timeOfDay、skyDarken、天空色、雾色、日出日落、星星位置、lightmap |
+| | `index.ts` | 天空的渲染：天空盘、日出日落扇形、太阳、月亮、星星；每帧更新光照贴图 |
 | `player/` | `index.ts` | 玩家状态（位置、上一 tick 位置、速度、姿势、水深……）、原版物理常数 `PHYSICS`、姿势表 `POSES` |
 | `control/` | `index.ts` | 键鼠输入、20 TPS 循环 + 插值、镜头（眼高、摇晃、视野）、挖放方块、出生点 |
 | | `movement.ts` | 一个 tick 的移动：原版的加速度、摩擦、跳跃、飞行、游泳、潜行、疾跑 |
 | | `physics.ts` | AABB 按轴裁剪碰撞、抬步、潜行防掉落 |
 | | `raycast.ts` | DDA 射线选方块 |
 | `terrain/` | `index.ts` | 区块加载 / 卸载、`getBlock` / `setBlock`、改动记录、主线程重建网格 |
-| | `chunk/Chunk.ts` | 一根区块柱：24 个 section + 每个 section 的网格 |
+| | `chunk/Chunk.ts` | 一根区块柱：24 个 section + 每个 section 的网格；不压缩的方块 flat、光照 light（v6） |
+| | `light/LightEngine.ts` | 光照引擎（v6）：光照属性表、天空光源、按亮度分桶的扩散、区块光照、网格用的光照邻域 |
+| | `light/LightUpdater.ts` | 挖放方块后的增量更新（v6）：熄灭 + 点亮 |
+| | `light/lightProps.json` | 每种方块的 [lightBlock, lightEmission]，`tools/vanilla/gen-light.py` 从原版 jar 导出 |
 | | `chunk/Section.ts` | 16³ 的一段，非空气计数 |
 | | `chunk/PalettedContainer.ts` | 调色板容器：单值 / 间接 / 直接三种模式，自动扩容 |
 | | `chunk/BitStorage.ts` | 位压缩数组，值不跨整数 |
 | | `blocks.ts` | 方块种类、每个面的纹理、是否实心、物品栏 |
-| | `mesh/mesher.ts` | 贪婪网格：面剔除 + 顶点 AO + 合并；Worker 和主线程共用 |
-| | `mesh/materials.ts` | 纹理数组 ShaderMaterial：不透明 / 水 / 线框；生物群系颜色图 |
+| | `mesh/mesher.ts` | 贪婪网格：面剔除 + 顶点 AO + 平滑光照（v6）+ 合并；Worker 和主线程共用 |
+| | `mesh/materials.ts` | 纹理数组 ShaderMaterial：不透明 / 水 / 线框；生物群系颜色图；光照贴图、圆柱雾（v6） |
 | | `textures/painters.ts` | 用代码画 16 张纹理 |
 | | `textures/index.ts` | 纹理数组 |
 | | `fluid/FluidTicker.ts` | 流体流动：计划刻、getNewLiquid、spread、岩浆遇水 |
 | | `highlight/` | 选中方块的线框 |
-| | `worker/generate.ts` | Worker 入口：init / chunk / f3 / slice 四个方法 |
-| | `worker/surface.ts` | 区块原型（密度 → 方块 → 矿脉 → 地表）；装配（+ 地物 + 颜色 + section 压缩 + 网格） |
+| | `worker/generate.ts` | Worker 入口：init / chunk / light / skyColors / f3 / slice |
+| | `worker/surface.ts` | 区块原型（密度 → 方块 → 矿脉 → 地表）；装配（+ 地物 + 颜色 + section 压缩）；meshChunk：光照 + 网格（v6） |
 | | `worker/pipeline.ts` | 区块源（v5）：缓存原型和装饰结果；4×4 区块的装饰区域 |
 | | `worker/pool.ts` | Worker 池，请求交给最空闲的 Worker；区块请求按装饰区域固定分配（v5） |
 | | `worker/protocol.ts` | 主线程 ↔ Worker 的消息类型 |
@@ -104,7 +122,7 @@ Chunk（16×16×384）
 | | `worldgen/` | 世界生成引擎，见下 |
 | `ui/` | `index.ts` | 菜单、准星、物品栏、加载提示 |
 | | `icons.ts` | 物品栏的立体方块图标 |
-| | `debug/f3.ts` | F3 调试屏（NoiseRouter 一行、内存 / 网格统计）；G、K 键 |
+| | `debug/f3.ts` | F3 调试屏（NoiseRouter 一行、内存 / 网格统计、Client Light、时间）；G、K 键 |
 | | `debug/noiseMap.ts` | M 键噪声图面板 |
 
 ## worldgen：v0 的核心

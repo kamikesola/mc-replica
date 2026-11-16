@@ -102,6 +102,34 @@ export interface VanillaChunk {
   /** 带属性的完整状态，比如 minecraft:snow[layers=1]，和 blocks 同下标；没有属性时等于方块名 */
   states: string[]
   height: number
+  /** v6：每个 section（按 Y）存的天空光、方块光（2048 字节，每格 4 位）；没存的是 undefined */
+  light: Map<number, { sky?: Int8Array; block?: Int8Array }>
+}
+
+/**
+ * 原版存档里一格的光照（v6）。原版不是每个 section 都存光照：
+ *   方块光没存 → 0
+ *   天空光没存 → 往上找第一个存了的 section，取它最下面一层同一列的值；上面都没存 → 15（原版 SkyLightSectionStorage.getLightValue）
+ */
+export function vanillaLight(c: VanillaChunk, x: number, y: number, z: number): { sky: number; block: number } {
+  const nib = (a: Int8Array, i: number) => (a[i >> 1] >> ((i & 1) * 4)) & 15
+  const sy = y >> 4
+  const i = ((y & 15) * 16 + z) * 16 + x
+  const sec = c.light.get(sy)
+  const block = sec?.block ? nib(sec.block, i) : 0
+  let sky = 15
+  if (sec?.sky) sky = nib(sec.sky, i)
+  else {
+    const top = Math.max(...c.light.keys())
+    for (let s = sy + 1; s <= top; s++) {
+      const a = c.light.get(s)?.sky
+      if (a) {
+        sky = nib(a, z * 16 + x)
+        break
+      }
+    }
+  }
+  return { sky, block }
 }
 
 /** 世界目录下读一个区块 */
@@ -148,5 +176,7 @@ export function loadChunk(worldDir: string, cx: number, cz: number, cache = new 
       ;[blocks[base + i], states[base + i]] = palette[v]
     }
   }
-  return { status: String(nbt.Status), minY, height, blocks, states }
+  const light = new Map<number, { sky?: Int8Array; block?: Int8Array }>()
+  for (const s of nbt.sections as { [k: string]: Nbt }[]) light.set(Number(s.Y), { sky: s.SkyLight as Int8Array | undefined, block: s.BlockLight as Int8Array | undefined })
+  return { status: String(nbt.Status), minY, height, blocks, states, light }
 }

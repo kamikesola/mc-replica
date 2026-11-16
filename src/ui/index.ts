@@ -1,6 +1,7 @@
 import type Control from '../control'
 import type Core from '../core'
 import type Terrain from '../terrain'
+import type Sky from '../sky'
 import { BLOCKS, HOTBAR } from '../terrain/blocks'
 import { blockIcon } from './icons'
 import type { WorldInfo } from '../terrain/worker/protocol'
@@ -31,11 +32,13 @@ export default class UI {
   private fps = 0
   private fpsTime = performance.now()
   private lastSlot = -1
+  private timeInput: HTMLInputElement | null = null
 
   constructor(
     private readonly core: Core,
     private readonly terrain: Terrain,
-    private readonly control: Control
+    private readonly control: Control,
+    private readonly sky: Sky
   ) {
     this.f3 = new F3(core, terrain, control)
     this.noiseMap = new NoiseMap(terrain, control)
@@ -76,6 +79,16 @@ export default class UI {
     distance.addEventListener('change', () => this.setDistance(Number(distance.value)))
     const bobbing = $<HTMLInputElement>('bobbing')
     bobbing.addEventListener('change', () => (this.control.bobbing = bobbing.checked))
+
+    // 时间和亮度（v6）：原版的 /time set、doDaylightCycle 游戏规则、“亮度”选项
+    const time = $<HTMLInputElement>('timeInput')
+    const cycle = $<HTMLInputElement>('daylightCycle')
+    const gamma = $<HTMLSelectElement>('gamma')
+    time.addEventListener('input', () => (this.terrain.dayTime = Number(time.value)))
+    cycle.addEventListener('change', () => (this.terrain.daylightCycle = cycle.checked))
+    gamma.addEventListener('change', () => (this.sky.gamma = Number(gamma.value)))
+    if (q.get('time')) this.terrain.dayTime = Number(q.get('time'))
+    this.timeInput = time
     if (q.get('distance')) {
       distance.value = q.get('distance')!
       this.setDistance(Number(distance.value))
@@ -97,9 +110,6 @@ export default class UI {
       `种子 ${info.seed} · ${info.settings}` +
       (vanilla ? '' : ' · 没有检测到原版数据包，正在使用 demo 简化地形（见 datapacks/README.md）')
     this.noiseMap.setFields(info.routerFields)
-    // 维度的天空色（v5.2）：下界取下界荒地的 fog_color，末地近乎黑色
-    if (/nether/.test(info.settings)) this.core.setSky(0x330808)
-    else if (/end/.test(info.settings)) this.core.setSky(0x14101c)
     this.setDistance(this.terrain.distance)
   }
 
@@ -141,6 +151,9 @@ export default class UI {
     }
 
     this.core.setMedium(this.control.medium)
+    // 菜单里的时间滑块跟着走（菜单打开时才看得见）
+    if (this.timeInput && !this.menu.classList.contains('hidden') && document.activeElement !== this.timeInput)
+      this.timeInput.value = String(((this.terrain.dayTime % 24000) + 24000) % 24000)
     this.f3.update(this.fps)
     this.noiseMap.update()
   }

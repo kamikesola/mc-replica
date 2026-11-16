@@ -11,7 +11,7 @@ import DEFS from './stateDefs.json'
  *   - 方块 b 的默认状态编号就是 b（0..方块数−1）。所以 v6 以前所有写 BlockType.xxx 的代码，写进去的都是默认状态，意思不变
  *   - 其余状态从方块数开始，按方块顺序依次往后排；同一个方块内部的顺序和原版一样（属性按定义顺序，最后一个变得最快）
  *
- * 属性和取值来自原版的数据报告（tools/vanilla/gen-states.py 生成 stateDefs.json）。两种属性我们不当成状态：
+ * 属性和取值来自原版的数据报告（v7 是 gen-states.py，v8.1 起 tools/vanilla/gen-blocks.py 生成 stateDefs.json，包括原版全部方块）。两种属性我们不当成状态：
  *   - 水、岩浆的 level：v3 起流动的水已经是单独的“方块”（量 1..7、下落），名字里按原版规则还原出 level
  *   - 一直含水的方块（海草、珊瑚……）的 waterlogged：总是 true
  */
@@ -39,7 +39,7 @@ export interface StateRegistry {
   /** 状态总数 */
   count: number
   /** 状态 → 方块 */
-  blockOf: Uint8Array
+  blockOf: Uint16Array
   /** 状态 → 方块内下标 */
   indexOf: Uint16Array
 }
@@ -71,7 +71,7 @@ export function buildStates(names: string[], fixed: (b: number) => Record<string
     defs.push({ name, props, stride, count, defaultIndex, base: next, fixed: fx })
     next += count - 1
   }
-  const blockOf = new Uint8Array(next)
+  const blockOf = new Uint16Array(next)
   const indexOf = new Uint16Array(next)
   for (let b = 0; b < defs.length; b++) {
     const d = defs[b]
@@ -128,4 +128,18 @@ export function stateName(r: StateRegistry, s: number): string {
   const p = propsOf(r, s)
   const keys = Object.keys(p).sort()
   return keys.length ? `${d.name}[${keys.map((k) => `${k}=${p[k]}`).join(',')}]` : d.name
+}
+
+/**
+ * 状态在原版里是这个方块的第几个状态（v8.1）：原版导出的按状态的数据（光照、碰撞箱……）都按这个顺序存。
+ * 和我们的下标（indexOf）只在有“固定属性”的方块上不一样：比如海草我们只有 waterlogged=true 的那一半
+ */
+export function vanillaIndex(r: StateRegistry, s: number): number {
+  const d = r.defs[r.blockOf[s]]
+  const raw = RAW[d.name]
+  if (!raw) return 0
+  const props = propsOf(r, s)
+  let i = 0
+  for (const [k, values] of raw.props) i = i * values.length + Math.max(0, values.indexOf(props[k]))
+  return i
 }

@@ -11,7 +11,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { BLOCK_OF, BlockType, fullStateName, NAME_BY_STATE, parseState, propOf, STATE_COUNT, stateOf } from '../src/terrain/blocks'
+import { BLOCK_OF, BlockType, fullStateName, NAME_BY_STATE, parseState, STATE_COUNT, stateOf } from '../src/terrain/blocks'
 import { chunkNbt, decodeChunk, readLevelDat, regionChunk } from '../src/save/anvil'
 import { BlockMapper } from '../src/save/blockMap'
 import { readNbt } from '../src/save/nbt'
@@ -113,17 +113,19 @@ test('原版的区块 = 我们按同一个种子生成的区块（森林，9 个
   assert.ok(ratio > 0.995, `一致 ${(ratio * 100).toFixed(3)}%`)
 })
 
-test('原版方块 → 我们的：认识的原样，不认识的找代替品或当空气，并且计数', () => {
+test('原版方块 → 我们的：v8.1 起原版 1.21.4 的方块都认识（带属性）；更新版本的方块找代替品或当空气，并且计数', () => {
   const m = new BlockMapper()
   assert.equal(m.map('minecraft:oak_log[axis=x]'), stateOf(BlockType.log, { axis: 'x' }))
-  assert.equal(m.map('minecraft:oak_stairs[facing=east,half=bottom,shape=straight,waterlogged=false]'), BlockType.planks)
-  const birch = m.map('minecraft:stripped_birch_log[axis=z]')
-  assert.equal(BLOCK_OF[birch], BlockType.log)
-  assert.equal(propOf(birch, 'axis'), 'z')
-  assert.equal(m.map('minecraft:torch'), BlockType.glowstone)
-  assert.equal(m.map('minecraft:barrier', 3), BlockType.air)
-  assert.equal(m.unknown.get('minecraft:barrier'), 3)
-  assert.equal(m.substituted.get('minecraft:oak_stairs'), 1)
+  const stairs = m.map('minecraft:oak_stairs[facing=east,half=bottom,shape=straight,waterlogged=false]')
+  assert.equal(fullStateName(stairs), 'minecraft:oak_stairs[facing=east,half=bottom,shape=straight,waterlogged=false]')
+  assert.equal(fullStateName(m.map('minecraft:wall_torch[facing=north]')), 'minecraft:wall_torch[facing=north]')
+  assert.deepEqual([...m.substituted.keys(), ...m.unknown.keys()], [])
+  // 1.21.5 才有的方块：按名字找代替品；实在不像的当空气
+  const bush = m.map('minecraft:bush')
+  assert.equal(BLOCK_OF[bush], BlockType.short_grass)
+  assert.equal(m.map('minecraft:example_thing[mode=start]', 3), BlockType.air)
+  assert.equal(m.unknown.get('minecraft:example_thing'), 3)
+  assert.equal(m.substituted.get('minecraft:bush'), 1)
   // 水的 level：流动的水
   assert.equal(m.map('minecraft:water[level=0]'), BlockType.water)
 })
@@ -160,6 +162,25 @@ test('存档：新建 → 改方块 → 保存 → 重新打开，改动和玩�
   await store.deleteWorld('w1')
   assert.equal(await WorldSave.open(store, 'w1'), null)
   assert.equal(store.chunks.size, 0)
+})
+
+test('存档：上一次还没存完时又存一次，第二次的内容不会丢（v8.1 修的 bug）', async () => {
+  const store = new MemoryStore()
+  await WorldSave.ensure(store, { id: 'w2', name: '测试', seed: '42', settings: '' })
+  const w = (await WorldSave.open(store, 'w2'))!.world
+  const edits = new Map<string, Map<number, number>>()
+  const p = (x: number) => ({ x, y: 0, z: 0, yaw: 0, pitch: 0, flying: false })
+  edits.set('0,0', new Map([[1, BlockType.stone]]))
+  w.dirty.add('0,0')
+  const first = w.save(edits, { player: p(1), dayTime: 0, daylightCycle: true })
+  // 第一次还在存：又改了一个区块、玩家走了
+  edits.set('5,5', new Map([[2, BlockType.glowstone]]))
+  w.dirty.add('5,5')
+  const second = w.save(edits, { player: p(2), dayTime: 0, daylightCycle: true })
+  await Promise.all([first, second])
+  const back = (await WorldSave.open(store, 'w2'))!
+  assert.equal(back.world.meta.player!.x, 2)
+  assert.equal(back.edits.get('5,5')?.get(2), BlockType.glowstone)
 })
 
 test('导入原版存档：存下 level.dat 里的种子和区域文件，按区块坐标找回区域文件', async () => {

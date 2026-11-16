@@ -3,9 +3,9 @@ import type { PlayerSave } from '../save/store'
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js'
 import Player, { PHYSICS } from '../player'
 import type Terrain from '../terrain'
-import { BLOCK_OF, BLOCKS, BlockType, HOTBAR, isFluid, isSolid, propOf, stateOf } from '../terrain/blocks'
+import { BLOCK_OF, BLOCKS, BlockType, COLLISION, COLLISION_SHAPES, HOTBAR, isFluid, propOf, stateOf } from '../terrain/blocks'
 import { tickPlayer, type MoveInput, type MoveWorld } from './movement'
-import { collides, EMPTY, FULL_CUBE, type Vec3 } from './physics'
+import { AABB, collides, EMPTY, FULL_CUBE, type Vec3 } from './physics'
 import { raycast, type RayHit } from './raycast'
 
 /** 原版默认视野 70°（竖直方向） */
@@ -45,6 +45,8 @@ export default class Control {
   spawned = false
   /** 当前选中的物品栏格子 0..8 */
   slot = 0
+  /** 物品栏的 9 格（v8.1 起可以用鼠标中键换成准星指着的方块） */
+  hotbar: number[] = [...HOTBAR]
   /** 准星对准的方块 */
   target: RayHit | null = null
   /** 最远能够到 5 格（原版生存模式 4.5，这里放宽一点） */
@@ -84,9 +86,10 @@ export default class Control {
     this.control = new PointerLockControls(this.head as unknown as THREE.Camera, document.body)
     this.world = {
       // 没加载的区块当作实心，防止掉进还没生成的地方
+      // v8.1：每个状态用原版的碰撞箱（台阶、栅栏、雪层、灵魂沙……），见 collisionBoxes
       shape: (x, y, z) => {
         const b = terrain.getBlock(x, y, z)
-        return b === null || isSolid(b) ? FULL_CUBE : EMPTY
+        return b === null ? FULL_CUBE : collisionBoxes(b)
       },
       block: (x, y, z) => terrain.getBlock(x, y, z) ?? BlockType.bedrock
     }
@@ -149,6 +152,7 @@ export default class Control {
       if (!this.control.isLocked || !this.target) return
       if (e.button === 0) this.breakBlock()
       if (e.button === 2) this.placeBlock()
+      if (e.button === 1) this.pickBlock()
     })
     document.addEventListener('contextmenu', (e) => e.preventDefault())
     document.addEventListener(
@@ -198,11 +202,27 @@ export default class Control {
     if (here === null || (here !== BlockType.air && !isFluid(here))) return
     // 不能把方块放进自己身体里
     const b = this.player.body
-    if (collides(this.player.pos, b.width, b.height, (bx, by, bz) => (bx === x && by === y && bz === z ? FULL_CUBE : EMPTY))) return
     // v7：原木按点的那一面朝向（原版 RotatedPillarBlock.getStateForPlacement：axis = 点击面的轴）
-    const block = HOTBAR[this.slot]
+    const block = this.hotbar[this.slot]
     const axis = t.nx !== 0 ? 'x' : t.ny !== 0 ? 'y' : 'z'
-    this.terrain.setBlock(x, y, z, propOf(block, 'axis') !== undefined ? stateOf(block, { axis }) : block)
+    const state = propOf(block, 'axis') !== undefined ? stateOf(block, { axis }) : block
+    if (collides(this.player.pos, b.width, b.height, (bx, by, bz) => (bx === x && by === y && bz === z ? collisionBoxes(state) : EMPTY))) return
+    this.terrain.setBlock(x, y, z, state)
+  }
+
+  /**
+   * 选方块（v8.1，原版的鼠标中键）：把准星指着的方块放进当前这一格物品栏。
+   * 原版拿到的是物品，放下去是默认状态；我们也放默认状态（原木照样按点的面定朝向）
+   */
+  pickBlock = () => {
+    const t = this.target
+    if (!t) return
+    const s = this.terrain.getBlock(t.x, t.y, t.z)
+    if (s === null || s === BlockType.air || isFluid(s)) return
+    const b = BLOCK_OF[s]
+    const i = this.hotbar.indexOf(b)
+    if (i >= 0) this.slot = i
+    else this.hotbar[this.slot] = b
   }
 
   // ---------------------------------------------------------------- 出生点
@@ -342,4 +362,18 @@ export default class Control {
     if (Math.abs(dir.x) > Math.abs(dir.z)) return dir.x > 0 ? 'east (+X)' : 'west (-X)'
     return dir.z > 0 ? 'south (+Z)' : 'north (-Z)'
   }
+}
+
+/** 状态的碰撞箱（v8.1）：原版导出的形状表换成 AABB，每种形状只换一次 */
+const SHAPE_CACHE: (readonly AABB[])[] = []
+export function collisionBoxes(s: number): readonly AABB[] {
+  const id = COLLISION[s]
+  let boxes = SHAPE_CACHE[id]
+  if (!boxes) {
+    const a = COLLISION_SHAPES[id]
+    const out: AABB[] = []
+    for (let i = 0; i < a.length; i += 6) out.push(new AABB(a[i], a[i + 1], a[i + 2], a[i + 3], a[i + 4], a[i + 5]))
+    boxes = SHAPE_CACHE[id] = id === 0 ? EMPTY : id === 1 ? FULL_CUBE : out
+  }
+  return boxes
 }

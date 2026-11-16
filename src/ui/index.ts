@@ -2,7 +2,7 @@ import type Control from '../control'
 import type Core from '../core'
 import type Terrain from '../terrain'
 import type Sky from '../sky'
-import { BLOCKS, HOTBAR } from '../terrain/blocks'
+import { BLOCKS } from '../terrain/blocks'
 import { blockIcon } from './icons'
 import type { WorldInfo } from '../terrain/worker/protocol'
 import { $, isMobile } from '../utils'
@@ -36,6 +36,7 @@ export default class UI {
   private fps = 0
   private fpsTime = performance.now()
   private lastSlot = -1
+  private lastHotbar = ''
   private timeInput: HTMLInputElement | null = null
 
   constructor(
@@ -126,7 +127,7 @@ export default class UI {
 
   initHotbar = () => {
     // 每格画一个小方块图标（用的就是方块自己的纹理，见 ui/icons.ts）
-    this.hotbar.innerHTML = HOTBAR.map(
+    this.hotbar.innerHTML = this.control.hotbar.map(
       (type, i) => `<div class="slot" title="${BLOCKS[type].name}"><img src="${blockIcon(type)}" alt=""><span>${i + 1}</span></div>`
     ).join('')
   }
@@ -143,10 +144,17 @@ export default class UI {
       this.fpsTime = now
     }
 
+    // v8.1：鼠标中键换了物品栏里的方块时重画
+    const key = this.control.hotbar.join()
+    if (key !== this.lastHotbar) {
+      this.lastHotbar = key
+      this.initHotbar()
+      this.lastSlot = -1
+    }
     if (this.control.slot !== this.lastSlot) {
       this.lastSlot = this.control.slot
       this.hotbar.querySelectorAll('.slot').forEach((el, i) => el.classList.toggle('on', i === this.lastSlot))
-      $('slotName').textContent = BLOCKS[HOTBAR[this.lastSlot]].name
+      $('slotName').textContent = BLOCKS[this.control.hotbar[this.lastSlot]].name
     }
 
     // 加载进度：出生前显示在菜单里

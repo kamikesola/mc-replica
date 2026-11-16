@@ -2,6 +2,41 @@
 
 每个版本对应一个 git tag 和一篇文章。数字来自 `tools/` 下的脚本或 `tests/` 里的测试，可以自己复现。
 
+## v8.1 · 原版全部方块
+
+文章：[docs/articles/v8.1-原版全部方块.md](docs/articles/v8.1-原版全部方块.md) · 日志：[docs/notes/v8.1-notes.md](docs/notes/v8.1-notes.md)
+
+**新增**
+
+- 原版 1.21.4 的全部 1095 种方块：手写的 234 种（编号不变）后面按原版注册顺序接上其余 875 种，一共 27816 个状态（调色板直接模式 12 → 15 位）
+- `tools/vanilla/gen-blocks.py` + `BlockDump.java`（代替 `gen-states.py`、`gen-light.py`、`LightDump.java`）：
+  - `blockList.json`：方块名；`stateDefs.json`：全部方块的属性、取值（数据报告）
+  - `light/lightProps.json`：全部状态的光照
+  - `blockShapes.json`：每个状态的碰撞箱（320 种形状）、破坏时间。jar 是混淆的，`BlockDump` 用反射按“已知方块的值”认出方法
+    （碰撞箱：栅栏 1.5 高、一层雪是空的；破坏时间：基岩 -1、石头 1.5）
+- 玩家的碰撞用原版的碰撞箱（`COLLISION`）：台阶、楼梯、栅栏、雪层、灵魂沙、箱子……；放方块时检查的也是这个方块自己的碰撞箱
+- 鼠标中键选方块（原版 pick block）：把准星指着的方块放进当前这一格物品栏
+- 染色：红石线按信号强度、南瓜梗 / 西瓜梗按生长阶段（原版 BlockColors）
+- 没有资源包时，新方块的程序纹理按名字挑一张差不多的，形状按碰撞箱分成方块 / 薄片 / 十字
+- 测试：`save.test.ts` 加一个（两次保存重叠时第二次不丢）；`states`、`models`、`save` 的测试按全部方块更新
+
+**修复**
+
+- 自动保存：上一次还没存完时又要保存，直接返回了上一次的 Promise —— 新的玩家位置和这期间改的方块都没存。刷新页面前正好赶上时会丢（v8）
+
+**改动**
+
+- `StateRegistry.blockOf` 改成 `Uint16Array`；按方块的表从 256 项改成按方块数
+- 按状态的光照表改成原版的状态顺序（`states.vanillaIndex` 换算）
+- 导入原版存档：1.21.4 的方块都认识了，代替品只用在更新版本才有的方块上
+- 烘焙全部状态的模型约 0.8 秒，发给每个 Worker 的数据也大了（启动时多 1~2 秒）
+
+**已知问题**
+
+- 放方块只放默认状态：栅栏不会自动连上、楼梯不会拐弯、门只有下半（v9）
+- 方块实体（箱子、告示牌、床、旗帜、头颅……）还是程序画的方块
+- 选方块的物品栏图标用的是程序纹理
+
 ## v8 · 存档
 
 文章：[docs/articles/v8-存档.md](docs/articles/v8-存档.md) · 日志：[docs/notes/v8-notes.md](docs/notes/v8-notes.md)

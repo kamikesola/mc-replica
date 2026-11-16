@@ -1,10 +1,11 @@
 import { fullStateName, NAME_BY_STATE, STATE_COUNT, STATES } from '../blocks'
 import PROPS from './lightProps.json'
+import { vanillaIndex } from '../states'
 
 /**
  * 光照引擎（v6）：天空光和方块光，移植自原版 1.21.4 的 SkyLightEngine / BlockLightEngine。
  *
- * 每个方块有两个光照属性（从原版 jar 导出，见 tools/vanilla/gen-light.py）：
+ * 每个方块有两个光照属性（从原版 jar 导出，见 tools/vanilla/gen-blocks.py；v6 时是 gen-light.py）：
  *   lightBlock     光穿过它要减多少：完全不透明的方块 15；水、树叶、冰 1；空气、花草 0
  *   lightEmission  自己发多亮的光：岩浆、萤石 15；发光地衣 7；岩浆块 3
  *
@@ -34,7 +35,8 @@ export const LIGHT_EMISSION = new Uint8Array(STATE_COUNT)
 for (let s = 0; s < STATE_COUNT; s++) {
   const p = (PROPS as unknown as Record<string, number[] | number[][]>)[NAME_BY_STATE[s] ?? '']
   if (!p) continue
-  const v = (Array.isArray(p[0]) ? (p as number[][])[STATES.indexOf[s]] : p) as number[]
+  // v8.1：按状态的列表是原版的顺序（tools/vanilla/gen-blocks.py）
+  const v = (Array.isArray(p[0]) ? (p as number[][])[vanillaIndex(STATES, s)] : p) as number[]
   LIGHT_BLOCK[s] = v[0]
   LIGHT_EMISSION[s] = v[1]
 }

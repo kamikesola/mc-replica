@@ -71,18 +71,17 @@ npx tsx tools/vanilla/make-full-fixture.ts <full 存档> tools/vanilla/areas51.t
 python3 tools/vanilla/gen-tags.py <解包的 jar 目录>          # v5.1：从原版 jar 展开方块标签，写 blockTags.json
 npx tsx tools/vanilla/structures-to-json.ts <jar 里的 data/minecraft/structure> datapacks/vanilla/structure
                                                               # v5.2：化石的结构模板（.nbt → JSON）
-python3 tools/vanilla/gen-light.py <server-1.21.4.jar> <libraries 目录>
-                                                              # v6：每个方块的光照属性 → src/terrain/light/lightProps.json，
-                                                              #     完整的状态表 → tools/vanilla/out/light-states.tsv（不进 git）
+python3 tools/vanilla/gen-blocks.py <generated/reports/blocks.json> <server-1.21.4.jar> <libraries 目录>
+                                                              # v8.1：原版全部方块（代替 v6 的 gen-light.py、v7 的 gen-states.py）：
+                                                              #     方块名 → src/terrain/blockList.json，属性和取值 → stateDefs.json，
+                                                              #     光照 → light/lightProps.json，碰撞箱和破坏时间 → blockShapes.json，
+                                                              #     完整的光照状态表 → tools/vanilla/out/light-states.tsv（不进 git）
 npx tsx tools/vanilla/diff-light.ts <bare 存档> --range -3 -3 2 2 --bare
                                                               # v6：天空光、方块光逐格比较（bare 存档要加 --bare）
 npx tsx tools/vanilla/diff-light.ts <full 存档> --vanilla-blocks --areas tools/vanilla/areas51.txt tools/vanilla/areas.txt
                                                               # v6：用原版存档里的方块算，只检验光照引擎；去掉 --vanilla-blocks 是端到端
 npx tsx tools/vanilla/make-light-fixture.ts <bare 存档> <bare52 存档>
                                                               # v6：重新生成 tests/fixtures/light6.json
-python3 tools/vanilla/gen-states.py <generated/reports/blocks.json>
-                                                              # v7：方块状态的属性和取值 → src/terrain/stateDefs.json
-                                                              #     （改了 stateDefs.json 之后要重跑 gen-light.py，光照属性按状态查）
 STATES=1 npx tsx tools/vanilla/diff-areas.ts <full 存档> tools/vanilla/areas.txt tools/vanilla/areas51.txt
                                                               # v7：同时比较完整状态（带属性），差别按状态列出
 npx tsx tools/vanilla/make-state-fixture.ts <full 存档> tools/vanilla/areas.txt tools/vanilla/areas51.txt
@@ -97,9 +96,9 @@ python3 tools/vanilla/extract-assets.py <客户端 1.21.4.jar>
 输出在 `generated/reports/`。v7 起 `diff.ts` 比较的是区块“落定”之后的结果（树叶的 distance 要看周围 3×3 个区块，见
 `src/terrain/worldgen/feature/settle.ts`），所以开着地物时会慢一些。
 
-`gen-light.py` 要的 jar 是 bundler 里面那个真正的服务端（`META-INF/versions/1.21.4/server-1.21.4.jar`），
-libraries 是 bundler 运行一次后解出来的 `libraries/` 目录。它会编译 `LightDump.java` 并直接调用原版的类
-（混淆名写在 Java 文件的注释里），所以需要 JDK。
+`gen-blocks.py` 要的 jar 是 bundler 里面那个真正的服务端（`META-INF/versions/1.21.4/server-1.21.4.jar`），
+libraries 是 bundler 运行一次后解出来的 `libraries/` 目录。它会编译 `BlockDump.java` 并直接调用原版的类
+（jar 是混淆过的：几个手查的名字写在 Java 文件的注释里，碰撞箱、破坏时间的方法用反射按“已知方块的值”认出来），所以需要 JDK。
 
 原版存档里的光照偶尔是“没算完”的（保存时还有光照更新在排队）：`diff-light.ts` 会检查每格是否满足
 “亮度 = max(光源, 邻居 − 代价)”，不满足的标成“原版没算完”，并给出去掉这些区块之后的一致率。

@@ -32,10 +32,10 @@ import { Worldgen } from '../src/terrain/worldgen/Worldgen'
 import DEFS from '../src/terrain/stateDefs.json'
 import { repoPath, vanillaPack } from './loadDatapack'
 
-test('状态编号：方块 b 的默认状态就是 b，其余状态排在后面，一共不到 4096 个（12 位）', () => {
+test('状态编号：方块 b 的默认状态就是 b，其余状态排在后面；v8.1 起是原版全部方块，一共不到 32768 个（15 位）', () => {
   for (let b = 0; b < BLOCK_COUNT; b++) assert.equal(BLOCK_OF[b], b)
-  assert.ok(STATE_COUNT > BLOCK_COUNT && STATE_COUNT <= 4096)
-  assert.equal(STATE_BITS, 12)
+  assert.ok(STATE_COUNT > BLOCK_COUNT && STATE_COUNT <= 32768)
+  assert.equal(STATE_BITS, 15)
   // 每个状态都能还原成同一个编号（名字 → 状态 → 名字）
   for (let s = 0; s < STATE_COUNT; s++) assert.equal(parseState(fullStateName(s)), s, fullStateName(s))
 })

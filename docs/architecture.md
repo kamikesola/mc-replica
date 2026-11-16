@@ -86,6 +86,12 @@ Chunk（16×16×384）
 地物用字符串传状态（`minecraft:oak_log[axis=x]`，属性按名字排序，和原版存档一样），`WorldGenLevel.setBlock` 负责换成编号。
 区块和周围 8 个都生成后有一步“落定”（`worldgen/feature/settle.ts`，目前是树叶的 distance），在 Worker 的 `light` 里和光照一起做。
 
+## 原版全部方块（v8.1）
+
+`blocks.ts` 里手写的 234 种（编号从 v1 起就定了）后面，按原版注册顺序接上其余的方块（`blockList.json`），一共 1109 种（含流体的各个状态）、27816 个状态，
+调色板直接模式 15 位。新方块的属性全部来自原版：属性和取值（数据报告），光照、碰撞箱、破坏时间（`BlockDump.java` 从服务端导出），样子（资源包的模型）。
+按状态的数据都按原版的状态顺序存，`states.vanillaIndex` 把我们的状态换算成原版的下标。玩家的碰撞用 `COLLISION`（`control/index.ts` 的 `collisionBoxes`）。
+
 ## 方块模型（v7.1）
 
 有原版资源包（`resourcepacks/`）时，方块的样子来自原版模型：
@@ -133,11 +139,12 @@ Chunk（16×16×384）
 | | `chunk/Chunk.ts` | 一根区块柱：24 个 section + 每个 section 的网格；不压缩的方块 flat、光照 light（v6） |
 | | `light/LightEngine.ts` | 光照引擎（v6）：光照属性表、天空光源、按亮度分桶的扩散、区块光照、网格用的光照邻域 |
 | | `light/LightUpdater.ts` | 挖放方块后的增量更新（v6）：熄灭 + 点亮 |
-| | `light/lightProps.json` | 每种方块的 [lightBlock, lightEmission]，`tools/vanilla/gen-light.py` 从原版 jar 导出 |
+| | `light/lightProps.json` | 每种方块的 [lightBlock, lightEmission]，`tools/vanilla/gen-blocks.py` 从原版 jar 导出（v8.1 起所有方块，按状态） |
 | | `chunk/Section.ts` | 16³ 的一段，非空气计数 |
 | | `chunk/PalettedContainer.ts` | 调色板容器：单值 / 间接 / 直接三种模式，自动扩容 |
 | | `chunk/BitStorage.ts` | 位压缩数组，值不跨整数 |
-| | `blocks.ts` | 方块种类、每个面的纹理、是否实心、物品栏 |
+| | `blocks.ts` | 方块种类、每个面的纹理、是否实心、物品栏；v8.1 起原版全部方块，碰撞箱 `COLLISION`、破坏时间 `HARDNESS` |
+| | `blockList.json`、`blockShapes.json` | 原版全部方块名；每个状态的碰撞箱和破坏时间（v8.1，`tools/vanilla/gen-blocks.py` 从原版 jar 导出） |
 | | `mesh/mesher.ts` | 贪婪网格：面剔除 + 顶点 AO + 平滑光照（v6）+ 合并；Worker 和主线程共用 |
 | | `mesh/materials.ts` | 纹理数组 ShaderMaterial：不透明 / 水 / 线框；生物群系颜色图；光照贴图、圆柱雾（v6） |
 | | `textures/painters.ts` | 用代码画 16 张纹理 |

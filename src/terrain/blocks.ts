@@ -1,6 +1,9 @@
 import { ALWAYS_WATERLOGGED } from './worldgen/feature/core'
-import { buildStates, getProp, stateName, withProps, type StateRegistry } from './states'
+import { buildStates, getProp, stateName, vanillaIndex, withProps, type StateRegistry } from './states'
 import { TEXTURE_LAYER, type TextureName } from './textures/painters'
+import BLOCK_LIST from './blockList.json'
+import SHAPES_JSON from './blockShapes.json'
+import STATE_DEFS from './stateDefs.json'
 
 /**
  * 方块种类。和原项目的 BlockType 一样是一个枚举，值就是存进调色板的方块 ID。
@@ -100,7 +103,7 @@ export function fluidBlock(kind: FluidKind.water | FluidKind.lava, amount: numbe
 const NO_FLUID: FluidState = { kind: FluidKind.none, amount: 0, source: false, falling: false }
 
 /** 方块 → 流体状态（v7 起最终用的是按状态的 FLUIDS，见文件末尾） */
-const BLOCK_FLUIDS: FluidState[] = Array.from({ length: 256 }, () => NO_FLUID)
+const BLOCK_FLUIDS: FluidState[] = Array.from({ length: 4096 }, () => NO_FLUID)
 const WATER_SOURCE: FluidState = { kind: FluidKind.water, amount: 8, source: true, falling: false }
 for (const kind of [FluidKind.water, FluidKind.lava] as const) {
   BLOCK_FLUIDS[kind === FluidKind.water ? BlockType.water : BlockType.lava] = { kind, amount: 8, source: true, falling: false }
@@ -436,7 +439,67 @@ for (const [name, b] of Object.entries(BLOCK_BY_NAME)) NAME_BY_BLOCK[b] ??= name
 for (let b = 16; b <= 23; b++) NAME_BY_BLOCK[b] = 'minecraft:water'
 for (let b = 24; b <= 31; b++) NAME_BY_BLOCK[b] = 'minecraft:lava'
 
-/** 方块种类数（含所有流体状态） */
+// ---------------------------------------------------------------- 其余的原版方块（v8.1）
+
+/**
+ * 原版一共 1095 种方块。上面手写的 234 种（含流体的各个状态）是地形生成用得到的，编号从 v1 起就定了；
+ * 其余的按原版注册顺序接在后面（blockList.json），名字就是原版名。
+ * 它们的形状、碰撞箱、光照都来自原版服务端（tools/vanilla/gen-blocks.py），样子来自资源包里的模型（v7.1）。
+ * 没有资源包时，程序纹理按名字挑一张差不多的（木头类用木板、石头类用圆石……），形状按碰撞箱粗略地分成方块 / 薄片 / 十字。
+ */
+const SHAPES_DATA = SHAPES_JSON as unknown as { shapes: number[][]; collision: Record<string, number | number[]>; hardness: Record<string, number | number[]> }
+const RAW_DEFS = STATE_DEFS as unknown as Record<string, { props: [string, string[]][]; default: Record<string, string> }>
+
+/** 原版方块的默认状态在它所有状态里的下标（原版顺序） */
+function vanillaDefaultIndex(name: string): number {
+  const d = RAW_DEFS[name]
+  if (!d) return 0
+  let i = 0
+  for (const [k, values] of d.props) i = i * values.length + values.indexOf(d.default[k])
+  return i
+}
+const perVanillaState = <T>(v: T | T[], i: number): T => (Array.isArray(v) ? v[i] : v)
+
+/** 没有资源包时用哪张程序纹理 */
+const PROC_TEXTURES: [RegExp, TextureName, TextureName?][] = [
+  [/(_|^)(log|wood|stem|hyphae)$/, 'log_top', 'log'],
+  [/leaves$/, 'leaves'],
+  [/planks|_slab$|_stairs$|fence|door|sign|crafting_table|bookshelf|barrel|chest|lectern|loom|composter|beehive|scaffolding|ladder|table$/, 'planks'],
+  [/glass|ice/, 'ice'],
+  [/wool|carpet|_bed$|concrete|terracotta|shulker/, 'white_terracotta'],
+  [/sandstone/, 'sandstone'],
+  [/snow/, 'snow'],
+  [/ore$/, 'iron_ore'],
+  [/bars|chain/, 'iron_bars'],
+  [/lantern|lamp|torch|campfire|candle|end_rod|froglight|glowstone/, 'glowstone'],
+  [/dirt|farmland|path|mud|soil/, 'dirt'],
+  [/brick|cobble|stone|deepslate|andesite|diorite|granite|tuff|blackstone|basalt|quartz|prismarine|purpur|furnace|smoker|_wall$|polished/, 'cobblestone']
+]
+
+for (const name of BLOCK_LIST as string[]) {
+  if (BLOCK_BY_NAME[name] !== undefined) continue
+  const short = name.slice(10)
+  const di = vanillaDefaultIndex(name)
+  const shape = SHAPES_DATA.shapes[perVanillaState(SHAPES_DATA.collision[name], di)]
+  const hardness = perVanillaState(SHAPES_DATA.hardness[name], di)
+  const [, top, side] = PROC_TEXTURES.find(([re]) => re.test(short)) ?? [null, 'stone' as TextureName]
+  const full = shape.length === 6 && shape.join() === '0,0,0,1,1,1'
+  // 只有一个盒子、贴着地、铺满一格的：薄片（台阶、地毯、压力板……）
+  const flat = shape.length === 6 && shape[0] === 0 && shape[1] === 0 && shape[2] === 0 && shape[3] === 1 && shape[5] === 1 && shape[4] < 1
+  BLOCKS.push(
+    block(short, top, side ?? top, top, {
+      solid: full,
+      breakable: hardness >= 0,
+      shape: full ? 'cube' : flat ? 'slab' : 'cross',
+      height: flat ? Math.max(1, Math.round(shape[4] * 16)) : 16
+    })
+  )
+  const b = BLOCKS.length - 1
+  BLOCK_BY_NAME[name] = b
+  NAME_BY_BLOCK[b] = name
+}
+
+/** 方块种类数（含所有流体状态；v8.1 起包括原版全部方块） */
 export const BLOCK_COUNT = BLOCKS.length
 
 // ---------------------------------------------------------------- 方块状态（v7，见 states.ts）
@@ -553,20 +616,35 @@ export const HOTBAR: BlockType[] = [
 ]
 
 /** 实心表：SOLID[b] = 1 表示实心。网格生成时每个方块都要查好几次，用数组比查对象快 */
-export const SOLID: Uint8Array = perState(Uint8Array.from({ length: 256 }, (_, b) => (BLOCKS[b]?.solid ? 1 : 0)))
+export const SOLID: Uint8Array = perState(Uint8Array.from({ length: BLOCK_COUNT }, (_, b) => (BLOCKS[b]?.solid ? 1 : 0)))
 
 export const isSolid = (b: number) => SOLID[b] === 1
 
 /** 形状（v5）：0 完整方块，1 slab（雪层、地毯），2 十字（藤蔓等） */
 for (const b of [BlockType.vine, BlockType.glow_lichen, BlockType.sculk_vein]) BLOCKS[b].shape = 'multiface'
 export const SHAPE: Uint8Array = perState(
-  Uint8Array.from({ length: 256 }, (_, b) => {
+  Uint8Array.from({ length: BLOCK_COUNT }, (_, b) => {
     const s = BLOCKS[b]?.shape
     return s === 'slab' ? 1 : s === 'cross' ? 2 : s === 'multiface' ? 3 : s === 'none' ? 4 : 0
   })
 )
 /** slab 的高度（1/16 格） */
-export const SHAPE_HEIGHT: Uint8Array = Uint8Array.from(perState(Uint8Array.from({ length: 256 }, (_, b) => BLOCKS[b]?.height ?? 16)), (h, s) => {
+export const SHAPE_HEIGHT: Uint8Array = Uint8Array.from(perState(Uint8Array.from({ length: BLOCK_COUNT }, (_, b) => BLOCKS[b]?.height ?? 16)), (h, s) => {
   const layers = getProp(STATES, s, 'layers') // v7：雪层的厚度
   return layers ? Number(layers) * 2 : h
+})
+
+// ---------------------------------------------------------------- 碰撞箱、破坏时间（v8.1，原版导出）
+
+/** 碰撞箱的形状表：每项是若干个盒子，每个盒子 6 个数 x0 y0 z0 x1 y1 z1（方块内坐标 0..1）。0 号是空的，1 号是完整方块 */
+export const COLLISION_SHAPES: readonly number[][] = SHAPES_DATA.shapes
+/** 状态 → 碰撞箱形状编号 */
+export const COLLISION: Uint16Array = Uint16Array.from({ length: STATE_COUNT }, (_, s) => {
+  const v = SHAPES_DATA.collision[NAME_BY_STATE[s]]
+  return v === undefined ? (SOLID[s] ? 1 : 0) : perVanillaState(v, vanillaIndex(STATES, s))
+})
+/** 状态 → 破坏时间（原版 destroyTime，-1 = 挖不动：基岩、屏障……） */
+export const HARDNESS: Float32Array = Float32Array.from({ length: STATE_COUNT }, (_, s) => {
+  const v = SHAPES_DATA.hardness[NAME_BY_STATE[s]]
+  return v === undefined ? 0 : perVanillaState(v, vanillaIndex(STATES, s))
 })

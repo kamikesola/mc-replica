@@ -36,7 +36,7 @@ const has = (name: string) => {
 const bare = has('--bare')
 const useVanillaBlocks = has('--vanilla-blocks')
 /**
- * 原版每个状态的 [lightBlock, lightEmission]（gen-light.py 导出），以及底面挡光（雪层、下半台阶……）。
+ * 原版每个状态的 [lightBlock, lightEmission]（gen-blocks.py 导出），以及底面挡光（雪层、下半台阶……）。
  * 网格里存“组合号”，三张表按组合号查
  */
 const STATE_PROPS = new Map<string, number>()

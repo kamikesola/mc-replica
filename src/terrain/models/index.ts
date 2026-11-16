@@ -1,4 +1,4 @@
-import { BLOCK_OF, FluidKind, NAME_BY_BLOCK, SOLID, STATE_COUNT, STATES, BlockType, FACE_TEXTURES } from '../blocks'
+import { BLOCK_OF, FluidKind, NAME_BY_BLOCK, propOf, SOLID, STATE_COUNT, STATES, BlockType, FACE_TEXTURES } from '../blocks'
 import { propsOf } from '../states'
 import { TEXTURE_COUNT, TEXTURE_LAYER, TINT_BY_LAYER } from '../textures/painters'
 import { bakeModels, type BakedModels, type BakedQuad, type PackSource } from './bakery'
@@ -28,8 +28,27 @@ export const TINT_CUTOUT = 32
 export const TINT_MASK = 64
 export const TINT_ALPHA = 128
 
-/** 原版 BlockColors 里写死的颜色：云杉树叶、白桦树叶、睡莲 */
-export const TINT_COLORS = [0x619961, 0x80a755, 0x208030]
+/**
+ * 原版 BlockColors 里写死的颜色（染色字段 4..31 → 这里的第 0..27 项）：
+ *   4 云杉树叶、5 白桦树叶、6 睡莲
+ *   7..22 红石线，按信号强度 0..15（v8.1，RedStoneWireBlock.COLORS）
+ *   23..30 南瓜梗 / 西瓜梗，按生长阶段 0..7（v8.1）；31 已经结果的梗
+ */
+export const TINT_COLORS = [
+  0x619961,
+  0x80a755,
+  0x208030,
+  ...Array.from({ length: 16 }, (_, i) => {
+    const f = i / 15
+    const c = (v: number) => Math.min(1, Math.max(0, v))
+    const r = f * 0.6 + (f > 0 ? 0.4 : 0.3)
+    const g = c(f * f * 0.7 - 0.5)
+    const b = c(f * f * 0.6 - 0.7)
+    return (Math.floor(r * 255) << 16) | (Math.floor(g * 255) << 8) | Math.floor(b * 255)
+  }),
+  ...Array.from({ length: 8 }, (_, a) => ((a * 32) << 16) | ((255 - a * 8) << 8) | (a * 4)),
+  0xe0c71c
+]
 
 const GRASS_TINT = /^(grass_block|short_grass|tall_grass|fern|large_fern|potted_fern|sugar_cane|pink_petals)$/
 const FOLIAGE_TINT = /^(oak_leaves|jungle_leaves|acacia_leaves|dark_oak_leaves|mangrove_leaves|vine)$/
@@ -42,7 +61,7 @@ const TRANSLUCENT = /^(ice|frosted_ice|.*stained_glass(_pane)?|tinted_glass|slim
  * 不挡住邻居的完整方块（原版 noOcclusion）：树叶、玻璃、冰……
  * 它们旁边的方块面照样要画，不然从树叶的缝里会看到“虚空”
  */
-const NO_OCCLUSION = /leaves$|glass|^ice$|frosted_ice|mangrove_roots|spawner|slime_block|honey_block|^chest$|end_gateway|cactus|chorus/
+const NO_OCCLUSION = /leaves$|glass|^ice$|frosted_ice|mangrove_roots|spawner|slime_block|honey_block|^chest$|end_gateway|cactus|chorus|grate$|barrier/
 /** 和同种方块挨着时不画中间那一面（原版 HalfTransparentBlock / TransparentBlock.skipRendering） */
 const SKIP_SAME = /glass$|^ice$|frosted_ice|slime_block|honey_block/
 
@@ -107,6 +126,9 @@ export function tintFor(s: number, tintIndex: number, texName: string): number {
     else if (FOLIAGE_TINT.test(name)) kind = 2
     else if (WATER_TINT.test(name)) kind = 3
     else if (CONST_TINT[name]) kind = CONST_TINT[name]
+    else if (name === 'redstone_wire') kind = 7 + Number(propOf(s, 'power') ?? 0)
+    else if (name === 'melon_stem' || name === 'pumpkin_stem') kind = 23 + Number(propOf(s, 'age') ?? 0)
+    else if (name === 'attached_melon_stem' || name === 'attached_pumpkin_stem') kind = 31
   }
   return kind | TINT_CUTOUT | (TRANSLUCENT.test(name) || /water_(still|flow)/.test(texName) ? TINT_ALPHA : 0)
 }

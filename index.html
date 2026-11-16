@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>mc-replica v7.1</title>
+    <title>mc-replica v8</title>
   </head>
   <body>
     <!-- 游戏画面（canvas）由 Core 插入到 body 里；下面是 UI，由 src/ui 控制 -->
@@ -11,12 +11,21 @@
     <!-- 菜单：没锁定鼠标时显示 -->
     <div id="menu">
       <div class="panel">
-        <h1>mc-replica <span class="ver">v3</span></h1>
-        <p class="sub">用 TypeScript 复刻 Minecraft Java 版 1.21.1 · 地形来自原版密度函数</p>
+        <h1>mc-replica <span class="ver">v8</span></h1>
+        <p class="sub">用 TypeScript 复刻 Minecraft Java 版 1.21.4 · 地形来自原版密度函数</p>
         <p id="worldInfo" class="info"></p>
 
         <button id="play" class="primary" disabled>开始游戏</button>
         <p id="loadingStatus" class="hint">正在读取数据包…</p>
+
+        <details id="savesBox">
+          <summary>存档</summary>
+          <p id="saveStatus" class="hint"></p>
+          <div id="worldList"></div>
+          <label>新世界的名字 <input id="newWorldName" placeholder="新的世界" spellcheck="false" /></label>
+          <button id="newWorld" class="wide">新建世界（种子、noise_settings 用下面“世界设置”里的）</button>
+          <label class="file">导入原版存档：选择存档文件夹（里面有 level.dat 和 region）<input type="file" id="importWorld" webkitdirectory multiple /></label>
+        </details>
 
         <details>
           <summary>世界设置</summary>

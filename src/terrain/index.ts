@@ -11,6 +11,8 @@ import { meshSection, N, nIndex, POSITION_SCALE, type SectionMesh } from './mesh
 import type { ChunkData, WorldInfo } from './worker/protocol'
 import { bakeAll, setModels } from './models'
 import { loadPackTextures, loadResourcePack } from './models/pack'
+import { regionChunk } from '../save/anvil'
+import type { WorldSave } from '../save/WorldSave'
 import WorkerPool from './worker/pool'
 import { fixedTime } from '../sky/formulas'
 
@@ -52,6 +54,10 @@ export default class Terrain {
   private generation = 0
   /** 玩家改过的方块：区块 key → (方块编号 → 方块类型)，编号见 Chunk.index() */
   edits = new Map<string, Map<number, BlockType>>()
+  /** 打开着的存档（v8）；null 表示不保存 */
+  world: WorldSave | null = null
+  /** 原版存档（v8）：从存档读出来的区块数，换成代替品的 / 不认识的原版方块（名字 → 格数） */
+  vanillaStats = { chunks: 0, substituted: new Map<string, number>(), unknown: new Map<string, number>() }
   /** 贪婪网格开关（G 键），关掉就是 v0 那样一个面一个四边形，方便对比 */
   greedy = true
 
@@ -87,9 +93,9 @@ export default class Terrain {
   }
 
   /** 通知所有 Worker 换种子 / noise_settings，并清空现有区块 */
-  async init(seed: string, settings: string): Promise<WorldInfo> {
+  async init(seed: string, settings: string, edits?: Map<string, Map<number, BlockType>>): Promise<WorldInfo> {
     await this.loadModels()
-    this.edits.clear()
+    this.edits = edits ?? new Map()
     this.fluids.clear()
     this.reload()
     this.info = await this.pool.broadcast('init', { seed, settings })
@@ -259,12 +265,32 @@ export default class Terrain {
     return this.fixedTime ?? this.dayTime + (this.daylightCycle ? partialTick : 0)
   }
 
+  /**
+   * 原版存档（v8）：区域文件里有、并且生成完了的区块从存档读；否则按种子自己生成（和原版的结果一样，接得上）
+   */
+  private async loadVanilla(cx: number, cz: number): Promise<ChunkData> {
+    const region = await this.world!.region(cx, cz)
+    const raw = region && regionChunk(region, cx, cz)
+    if (raw) {
+      const r = await this.pool.call('vanillaChunk', { cx, cz, compression: raw.compression, data: raw.data }, regionAffinity(cx, cz))
+      for (const [book, add] of [
+        [this.vanillaStats.substituted, r.substituted],
+        [this.vanillaStats.unknown, r.unknown]
+      ] as const)
+        for (const [k, n] of Object.entries(add)) book.set(k, (book.get(k) ?? 0) + n)
+      if (r.chunk) {
+        this.vanillaStats.chunks++
+        return r.chunk
+      }
+    }
+    return this.pool.call('chunk', { cx, cz }, regionAffinity(cx, cz))
+  }
+
   private load(cx: number, cz: number): void {
     const key = `${cx},${cz}`
     const generation = this.generation
     this.loading.add(key)
-    this.pool
-      .call('chunk', { cx, cz }, regionAffinity(cx, cz))
+    ;(this.world?.meta.source === 'vanilla' ? this.loadVanilla(cx, cz) : this.pool.call('chunk', { cx, cz }, regionAffinity(cx, cz)))
       .then((data) => {
         if (generation !== this.generation) return // 期间换了种子，结果作废
         this.loading.delete(key)
@@ -349,6 +375,7 @@ export default class Terrain {
     if (c.light && old !== type) updateLight(this.lightWorld, x, y, z, old, type)
 
     const key = `${c.cx},${c.cz}`
+    this.world?.dirty.add(key) // v8：下次自动保存时存这个区块
     if (!this.edits.has(key)) this.edits.set(key, new Map())
     this.edits.get(key)!.set(Chunk.index(lx, y, lz, c.minY), type)
 

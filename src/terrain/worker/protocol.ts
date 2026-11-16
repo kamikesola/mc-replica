@@ -40,6 +40,14 @@ export interface ChunkData {
 export interface Requests {
   /** 装上原版资源包烘焙好的方块模型（v7.1，主线程烘焙一次发给每个 Worker）；null = 没有资源包 */
   models: [{ models: BakedModels | null }, null]
+  /**
+   * 原版存档里的一个区块（v8）：压缩的 NBT → 方块。没生成完的区块返回 chunk = null（主线程改为自己生成）。
+   * substituted / unknown：这个区块里换成代替品的、不认识的原版方块（名字 → 格数）
+   */
+  vanillaChunk: [
+    { cx: number; cz: number; compression: number; data: Uint8Array },
+    { chunk: ChunkData | null; substituted: Record<string, number>; unknown: Record<string, number> }
+  ]
   /** 设置种子和 noise_settings，返回世界信息 */
   init: [{ seed: string; settings: string }, WorldInfo]
   /** 生成一个区块的方块（v6 起不再顺便生成网格） */

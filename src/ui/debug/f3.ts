@@ -101,12 +101,13 @@ export default class F3 {
     const r = this.core.renderer.info.render
     const mb = (b: number) => (b / 1048576).toFixed(1) + ' MB'
     const lines = [
-      `mc-replica v7.1 (${fps} fps, 20 TPS)`,
+      `mc-replica v8 (${fps} fps, 20 TPS)`,
       `种子: ${info?.seed ?? '…'}    noise_settings: ${info?.settings ?? '…'}`,
       `区块: ${st.loaded} 已加载（${st.lit} 已点亮）, ${st.loading} 生成中, 上一个用时 ${this.terrain.lastChunkMs.toFixed(0)} ms, 光照+网格 ${this.terrain.lastLightMs.toFixed(0)} ms, 挖/放重建 ${this.terrain.lastRemeshMs.toFixed(1)} ms`,
       `方块数据: ${mb(st.bytes)}（v0 的存法要 ${mb(st.v0Bytes)}）`,
       // v7.1：方块的样子来自哪里
       `资源包: ${this.terrain.resourcePack ?? '没有（程序画的纹理，见 resourcepacks/README.md）'}`,
+      this.saveLine(),
       `网格: ${this.terrain.greedy ? '贪婪' : '逐面'} [G]${this.terrain.materials.wireframe ? ' 线框' : ''} [K]  ${st.sectionMeshes} 个 section 网格, ${st.quads.toLocaleString()} 个四边形, ${mb(st.meshBytes)}`,
       `本帧: ${r.calls} 次绘制, ${r.triangles.toLocaleString()} 个三角形`,
       `流体: ${st.fluidQueue} 个待更新, 上个 tick 处理 ${this.terrain.fluids.lastProcessed} 个`,
@@ -125,5 +126,23 @@ export default class F3 {
       `准星: ${targetName}${t ? `  (${t.x}, ${t.y}, ${t.z})` : ''}`
     ]
     this.el.textContent = lines.join('\n')
+  }
+
+  /** v8：存档；原版存档还显示读了几个区块、换掉 / 不认识的方块 */
+  private saveLine(): string {
+    const w = this.terrain.world
+    if (!w) return '存档: 不保存'
+    const v = this.terrain.vanillaStats
+    const top = (m: Map<string, number>) =>
+      [...m]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([k]) => k.replace('minecraft:', ''))
+        .join(', ')
+    let line = `存档: ${w.meta.name}（${w.meta.source === 'vanilla' ? '原版存档' : '生成'}）, ${this.terrain.edits.size} 个区块有改动`
+    if (w.meta.source === 'vanilla') {
+      line += `\n原版区块: ${v.chunks} 个, 代替 ${v.substituted.size} 种${v.substituted.size ? `（${top(v.substituted)}…）` : ''}, 不认识 ${v.unknown.size} 种${v.unknown.size ? `（${top(v.unknown)}…）` : ''}`
+    }
+    return line
   }
 }

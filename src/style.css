@@ -118,9 +118,49 @@ canvas {
 #menu details label.check input {
   width: auto;
 }
-#regenerate {
+#regenerate,
+#menu button.wide {
   margin-top: 10px;
   width: 100%;
+}
+/* v8：存档列表 */
+#worldList {
+  max-height: 180px;
+  overflow-y: auto;
+  margin-top: 8px;
+}
+#worldList .world {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid #2a2e35;
+  color: #d6dbe0;
+}
+#worldList .world > div {
+  flex: 1;
+}
+#worldList .world small {
+  color: #8a9099;
+}
+#worldList .world.current b {
+  color: #9fe07a;
+}
+#worldList .tag {
+  font-size: 11px;
+  background: #3a3f47;
+  border-radius: 4px;
+  padding: 0 5px;
+}
+#menu details label.file {
+  flex-direction: column;
+  align-items: flex-start;
+}
+#menu details label.file input {
+  width: 100%;
+}
+.hint.warn {
+  color: #f0b060;
 }
 .keys {
   display: flex;

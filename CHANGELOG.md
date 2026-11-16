@@ -2,6 +2,44 @@
 
 每个版本对应一个 git tag 和一篇文章。数字来自 `tools/` 下的脚本或 `tests/` 里的测试，可以自己复现。
 
+## v8 · 存档
+
+文章：[docs/articles/v8-存档.md](docs/articles/v8-存档.md) · 日志：[docs/notes/v8-notes.md](docs/notes/v8-notes.md)
+
+**新增**
+
+- 存档（`src/save/`）：世界信息、玩家（位置、朝向、飞行）、时间、改过的方块存进浏览器的 IndexedDB（`store.ts`，三张表 worlds / chunks / files）。
+  只存改动：区块 → (区块内下标 → 状态)，状态写成字符串的调色板（`minecraft:oak_log[axis=x]`），以后状态编号变了也能读
+- 自动保存：每 10 秒、切走标签页、关闭页面时（`WorldSave.save`，同一时间只存一次，存失败的区块下次再存）
+- 菜单的“存档”：存档列表（进入 / 删除）、新建世界、导入原版存档（选择存档文件夹）；地址栏 `?world=<id>`。
+  不带 `world` 时打开这个种子的默认世界（`default:<种子>:<noise_settings>`），没有就新建
+- 读原版存档：
+  - NBT（`nbt.ts`，DataView，浏览器和 Node 都能用；gzip / zlib 用自带的 DecompressionStream）
+  - level.dat：种子、出生点、时间、单人存档的玩家（原版朝向换算成我们的）
+  - 区域文件（`anvil.ts`）：扇区表、压缩方式、调色板 + 按位压缩的方块（每个 long 拆成两个 32 位数解，不用逐格 bigint）
+  - 解码在 Worker 里（新方法 `vanillaChunk`）；生物群系颜色按种子算（`chunkFromBlocks`）
+  - 存档里没有的区块、没生成完的区块按存档的种子自己生成，和原版接得上
+  - 原版方块 → 我们的方块（`blockMap.ts`）：认识的原样（带属性）；不认识的按名字找代替品（木头类 → 木板、石头类 → 圆石、玻璃 → 冰……），
+    再不行当空气。F3 显示代替了几种、不认识几种
+- 出生：存档里有玩家就回到那里（等脚下的区块点亮）；原版存档没有玩家时在它的出生点附近找地方
+- F3：存档一行（名字、来源、有改动的区块数；原版存档：读了几个区块、代替 / 不认识的方块）
+- 工具：`tools/vanilla/make-save-fixture.ts`（从原版存档剪一个小存档）
+- 测试：`tests/save.test.ts`（9 个）：NBT 各类型、level.dat、区块解码和 Node 版逐格一致（9 个区块）、原版区块 = 我们按同一种子生成的区块、
+  方块代替、改动编码（所有状态往返）、保存 → 重新打开、导入原版存档、原版朝向换算。fixture：`tests/fixtures/save8/`（level.dat + 9 个区块，80 KiB）
+
+**改动**
+
+- `Terrain.init` 可以带上改动（`edits`）；`Terrain.world`、`vanillaStats`；`writeBlock` 标记要保存的区块
+- Worker 的处理函数可以是异步的（解压是异步的）
+- 菜单标题改成 v8 / 1.21.4（之前一直写着 v3 / 1.21.1）
+
+**已知问题**
+
+- 原版存档里我们没有的方块（大部分人造方块：楼梯、玻璃、火把、羊毛……）用代替品，形状和光照都不对；v8.1 要把全部原版方块加进来
+- 只读方块：方块实体（箱子里的东西、告示牌的字）、实体、生物不读
+- 不能导出成原版存档
+- 流体流动造成的方块变化也算改动（和原版一样会存），新世界第一次走一圈就有几十个区块有改动
+
 ## v7.1 · 方块模型
 
 文章：[docs/articles/v7.1-方块模型.md](docs/articles/v7.1-方块模型.md) · 日志：[docs/notes/v7.1-notes.md](docs/notes/v7.1-notes.md)

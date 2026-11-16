@@ -99,6 +99,16 @@ Chunk（16×16×384）
 
 纹理数组 = 程序画的纹理（v1~v7）+ 资源包的纹理。没有资源包、或者状态没有模型（箱子）时用 v7 的画法。
 
+## 存档（v8）
+
+`src/save/`：
+
+- `store.ts`：IndexedDB（测试里用内存版）。worlds 一个世界一条；chunks 是改过的区块（键 `世界id|cx,cz`）；files 是导入的原版存档的文件
+- `WorldSave.ts`：打开着的世界。打开时读出改动交给 `Terrain.edits`（区块加载时写回去，v0 起就是这样），
+  `writeBlock` 记下改过的区块，`main.ts` 每 10 秒调用 `save`
+- 原版存档：`Terrain.load` 先看区域文件里有没有这个区块（`anvil.regionChunk`，主线程只切片），有就发给 Worker 解码（`vanillaChunk`），
+  没有或没生成完就照常生成。原版方块到我们的方块的对应在 `blockMap.ts`
+
 ## 网格与材质（v1）
 
 - 一个 section 两个网格：不透明、半透明（水、冰）。每个顶点 20 字节（v7.1）：`position` Uint16×3（坐标 ×256）+ `uv` Int16×2（纹理坐标 ×256，v7.1）+ `info` Uint16×4（方向、纹理层、AO、染色字段）+ `light` Uint8×2（v6：天空光、方块光，各是 4 格之和）。

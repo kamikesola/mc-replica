@@ -422,3 +422,29 @@ function biomeTints(wg: Worldgen, cx: number, cz: number, biomeOf: (x: number, z
       }
   return out
 }
+
+/**
+ * 已有的方块（v8：从原版存档读出来的区块）→ 和 generateChunk 一样的结果：section、不压缩的方块、生物群系颜色。
+ * 生物群系按种子算（和原版一样，所以不用读存档里的 biomes）；流体已经流定了，不用再更新
+ */
+export function chunkFromBlocks(wg: Worldgen, settingsId: string, s: NoiseSettingsInfo, cx: number, cz: number, flat: Uint16Array) {
+  const t0 = performance.now()
+  const H = s.height
+  const minY = s.minY
+  const biomes = wg.biomes(settingsId)
+  // 每一列最高的非空气方块（颜色取地表的生物群系）
+  const heights = new Int32Array(256)
+  for (let i = 0; i < 256; i++) {
+    let y = H - 1
+    while (y >= 0 && flat[y * 256 + i] === BlockType.air) y--
+    heights[i] = minY + Math.max(0, y)
+  }
+  const tints = biomeTints(wg, cx, cz, (x, z) => {
+    const lx = Math.min(15, Math.max(0, x - cx * 16))
+    const lz = Math.min(15, Math.max(0, z - cz * 16))
+    return biomes.getBiome(x, heights[lz * 16 + lx], z)
+  })
+  const sections: PalettedData[] = []
+  for (let sy = 0; sy < H >> 4; sy++) sections.push(PalettedContainer.fromValues(flat.subarray(sy * 4096, sy * 4096 + 4096), STATE_BITS).toData())
+  return { cx, cz, sections, blocks: flat, fluidUpdates: new Int32Array(0), tints, ms: performance.now() - t0 }
+}

@@ -17,7 +17,8 @@ import Player from './player'
 import Sky from './sky'
 import Terrain from './terrain'
 import UI from './ui'
-import { query } from './utils'
+import { IdbStore } from './save/store'
+import { WorldSave } from './save/WorldSave'
 
 import './style.css'
 
@@ -30,13 +31,55 @@ const player = new Player()
 const terrain = new Terrain(scene, camera)
 const control = new Control(scene, camera, player, terrain)
 const sky = new Sky()
-const ui = new UI(core, terrain, control, sky)
+// v8：存档放在浏览器的 IndexedDB 里
+const store = new IdbStore()
+const ui = new UI(core, terrain, control, sky, store)
 
-// 种子和 noise_settings 从地址栏读：?seed=42&settings=minecraft:overworld
-terrain.init(query('seed') ?? '42', query('settings') ?? '').then((info) => {
+// v8：存档。地址栏 ?world=<id> 打开一个存档；没有的话按 ?seed=&settings= 打开（或新建）这个种子的默认世界
+
+async function start() {
+  const q = new URLSearchParams(location.search)
+  let opened: Awaited<ReturnType<typeof WorldSave.open>> = null
+  try {
+    let id = q.get('world')
+    if (!id) {
+      const seed = q.get('seed') ?? '42'
+      const settings = q.get('settings') ?? ''
+      id = `default:${seed}:${settings}`
+      await WorldSave.ensure(store, { id, name: `种子 ${seed}${settings ? ' · ' + settings.replace('minecraft:', '') : ''}`, seed, settings })
+    }
+    opened = await WorldSave.open(store, id)
+    if (!opened) ui.saves.warn(`没有找到存档 ${id}，这次不会保存`)
+  } catch (e) {
+    // 隐私模式等情况下 IndexedDB 不能用：照常玩，只是不保存
+    console.error(e)
+    ui.saves.warn('浏览器不让用 IndexedDB，这次不会保存')
+  }
+  const meta = opened?.world.meta
+  if (opened) {
+    terrain.world = opened.world
+    control.resume = meta!.player
+    if (meta!.vanilla && !meta!.player) control.spawnCenter = { x: meta!.vanilla.spawn.x, z: meta!.vanilla.spawn.z }
+    terrain.dayTime = meta!.dayTime
+    terrain.daylightCycle = meta!.daylightCycle
+  }
+  const info = await terrain.init(meta?.seed ?? q.get('seed') ?? '42', meta?.settings ?? q.get('settings') ?? '', opened?.edits)
   sky.setDimension(info.settings)
   ui.onWorldReady(info)
-})
+}
+start()
+
+/** 自动保存（v8）：每 10 秒一次，切到别的标签页、关掉页面时也存一次 */
+function save() {
+  const w = terrain.world
+  if (!w || !control.spawned) return
+  w.save(terrain.edits, { player: control.saveState, dayTime: terrain.dayTime, daylightCycle: terrain.daylightCycle })
+    .then(() => ui.saves.saved())
+    .catch((e) => console.error('保存失败', e))
+}
+setInterval(save, 10000)
+document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && save())
+window.addEventListener('pagehide', save)
 
 /** 每半秒问一次 Worker：玩家周围群系的天空色、雾色（群系不会变得很快） */
 let skyQuery = 0
@@ -72,4 +115,4 @@ const clock = new THREE.Clock()
 })()
 
 // 方便在浏览器控制台里调试：game.terrain.getBlock(0, 64, 0)
-Object.assign(window, { game: { core, player, terrain, control, ui, sky } })
+Object.assign(window, { game: { core, player, terrain, control, ui, sky, store, save } })

@@ -8,6 +8,8 @@ import type { WorldInfo } from '../terrain/worker/protocol'
 import { $, isMobile } from '../utils'
 import F3 from './debug/f3'
 import NoiseMap from './debug/noiseMap'
+import SavesPanel from './saves'
+import type { SaveStore } from '../save/store'
 
 /**
  * UI：所有 HTML 界面（对应原项目的 UI 类）。
@@ -23,6 +25,8 @@ import NoiseMap from './debug/noiseMap'
 export default class UI {
   f3: F3
   noiseMap: NoiseMap
+  /** 存档（v8） */
+  saves: SavesPanel
   menu = $('menu')
   playButton = $<HTMLButtonElement>('play')
   status = $('loadingStatus')
@@ -38,9 +42,11 @@ export default class UI {
     private readonly core: Core,
     private readonly terrain: Terrain,
     private readonly control: Control,
-    private readonly sky: Sky
+    private readonly sky: Sky,
+    store: SaveStore
   ) {
     this.f3 = new F3(core, terrain, control)
+    this.saves = new SavesPanel(store, terrain)
     this.noiseMap = new NoiseMap(terrain, control)
     this.initMenu()
     this.initHotbar()
@@ -111,6 +117,9 @@ export default class UI {
       (vanilla ? '' : ' · 没有检测到原版数据包，正在使用 demo 简化地形（见 datapacks/README.md）')
     this.noiseMap.setFields(info.routerFields)
     this.setDistance(this.terrain.distance)
+    this.saves.refresh()
+    const w = this.terrain.world
+    if (w) $('saveStatus').textContent = `当前存档：${w.meta.name}`
   }
 
   // ---------------------------------------------------------------- 物品栏

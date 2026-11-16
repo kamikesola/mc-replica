@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import type { PlayerSave } from '../save/store'
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js'
 import Player, { PHYSICS } from '../player'
 import type Terrain from '../terrain'
@@ -213,11 +214,20 @@ export default class Control {
   trySpawn = (): boolean => {
     const info = this.terrain.info
     if (!info) return false
+    // v8：存档里有玩家的位置 → 回到那里（等脚下的区块点亮了再开始物理，免得掉下去）
+    const r0 = this.resume
+    if (r0) {
+      this.teleport(r0.x, r0.y, r0.z)
+      this.head.rotation.set(r0.pitch, r0.yaw, 0)
+      this.player.flying = r0.flying
+      return !!this.terrain.getChunk(Math.floor(r0.x), Math.floor(r0.z))?.light
+    }
+    const { x: sx, z: sz } = this.spawnCenter
     for (let r = 0; r <= 48; r += 4) {
       for (let i = 0; i < Math.max(1, r * 2); i++) {
         const a = (i / Math.max(1, r * 2)) * Math.PI * 2
-        const x = Math.floor(Math.cos(a) * r)
-        const z = Math.floor(Math.sin(a) * r)
+        const x = sx + Math.floor(Math.cos(a) * r)
+        const z = sz + Math.floor(Math.sin(a) * r)
         // 下界有基岩天花板：从天花板下面往下找落脚点（v5.2）
         const top = /nether/.test(info.settings) ? this.terrain.floorBelow(x, z, 120) : this.terrain.topSolidY(x, z)
         if (top === null) {
@@ -230,9 +240,20 @@ export default class Control {
         }
       }
     }
-    this.teleport(0.5, info.seaLevel + 10, 0.5)
+    this.teleport(sx + 0.5, info.seaLevel + 10, sz + 0.5)
     this.player.flying = true
     return true
+  }
+
+  /** 存档里的玩家（v8）：出生时直接回到这里 */
+  resume: PlayerSave | null = null
+  /** 没有存档的玩家时，在这一点附近找地方出生（v8：原版存档的出生点；生成的世界是原点） */
+  spawnCenter = { x: 0, z: 0 }
+
+  /** 存档用（v8）：玩家现在的位置、朝向、是否在飞 */
+  get saveState(): PlayerSave {
+    const p = this.player.pos
+    return { x: p.x, y: p.y, z: p.z, yaw: this.head.rotation.y, pitch: this.head.rotation.x, flying: this.player.flying }
   }
 
   // ---------------------------------------------------------------- 每帧

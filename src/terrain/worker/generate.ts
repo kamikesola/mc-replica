@@ -11,7 +11,9 @@ import { type NoiseSettingsInfo, Worldgen } from '../worldgen'
 import { peaksAndValleys } from '../worldgen/density/peaksAndValleys'
 import { loadPacks } from './datapacks'
 import type { Method, Params, RequestMessage, ResponseMessage, Result } from './protocol'
-import { generateChunk, meshChunk } from './surface'
+import { chunkFromBlocks, generateChunk, meshChunk } from './surface'
+import { chunkNbt, decodeChunk } from '../../save/anvil'
+import { BlockMapper } from '../../save/blockMap'
 import { settleLeaves } from '../worldgen/feature/settle'
 import { gaussianSampleRgb } from '../../sky/formulas'
 import { setModels } from '../models'
@@ -23,7 +25,7 @@ let settingsId = ''
 const hasSkyLight = (id: string) => !/nether|end/.test(id)
 let settings: NoiseSettingsInfo | null = null
 
-type Handler<M extends Method> = (wg: Worldgen, p: Params<M>) => [Result<M>, Transferable[]]
+type Handler<M extends Method> = (wg: Worldgen, p: Params<M>) => [Result<M>, Transferable[]] | Promise<[Result<M>, Transferable[]]>
 
 const handlers: { [M in Method]: Handler<M> } = {
   models(_wg, p) {
@@ -53,6 +55,17 @@ const handlers: { [M in Method]: Handler<M> } = {
       },
       []
     ]
+  },
+
+  async vanillaChunk(_wg, p) {
+    if (!settings) throw new Error('还没有 init')
+    const mapper = new BlockMapper()
+    const d = decodeChunk(await chunkNbt(p.compression, p.data), settings.minY, settings.height, mapper)
+    if (!d.full) return [{ chunk: null, substituted: {}, unknown: {} }, []]
+    const chunk = chunkFromBlocks(_wg, settingsId, settings, p.cx, p.cz, d.blocks)
+    const buffers: ArrayBufferLike[] = [chunk.tints.buffer, chunk.blocks.buffer]
+    for (const s of chunk.sections) if (s.data) buffers.push(s.data.buffer)
+    return [{ chunk, substituted: Object.fromEntries(mapper.substituted), unknown: Object.fromEntries(mapper.unknown) }, buffers as Transferable[]]
   },
 
   chunk(wg, p) {
@@ -140,7 +153,7 @@ self.onmessage = async (e: MessageEvent<RequestMessage>) => {
   let transfer: Transferable[] = []
   try {
     const wg = await ready
-    const [result, t] = (handlers[method] as Handler<Method>)(wg, params)
+    const [result, t] = await (handlers[method] as Handler<Method>)(wg, params)
     reply = { id, ok: true, result }
     transfer = t
   } catch (err) {

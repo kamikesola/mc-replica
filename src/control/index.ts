@@ -4,7 +4,8 @@ import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockCont
 import Player, { PHYSICS } from '../player'
 import type Terrain from '../terrain'
 import { BLOCK_OF, BLOCKS, BlockType, COLLISION, COLLISION_SHAPES, FLUIDS, FluidKind, HOTBAR, NAME_BY_STATE } from '../terrain/blocks'
-import { dirOf, neighborUpdates, placement, useBlock, type PlaceWorld } from '../terrain/placement'
+import { dirOf, placement, useBlock, type PlaceWorld } from '../terrain/placement'
+import { useRedstone } from '../terrain/redstone'
 import { tickPlayer, type MoveInput, type MoveWorld } from './movement'
 import { AABB, collides, EMPTY, FULL_CUBE, type Vec3 } from './physics'
 import { raycast, type RayHit } from './raycast'
@@ -191,11 +192,8 @@ export default class Control {
 
   /** 方块世界的读接口（v9，给 terrain/placement.ts 用） */
   private placeWorld: PlaceWorld = { get: (x, y, z) => this.terrain.getBlock(x, y, z) }
-  /** 写一格并通知邻居（v9）：门的另一半、栅栏的连接、楼梯拐弯……都在 neighborUpdates 里 */
-  private setAndUpdate = (x: number, y: number, z: number, s: number) => {
-    this.terrain.setBlock(x, y, z, s)
-    neighborUpdates(this.placeWorld, (nx, ny, nz, ns) => this.terrain.setBlock(nx, ny, nz, ns), x, y, z)
-  }
+  /** 写一格并通知邻居（v9）：门的另一半、栅栏的连接、楼梯拐弯……；v9.1 起红石也跟着算（Terrain.updateBlock） */
+  private setAndUpdate = (x: number, y: number, z: number, s: number) => this.terrain.updateBlock(x, y, z, s)
 
   breakBlock = () => {
     const t = this.target!
@@ -210,7 +208,8 @@ export default class Control {
     // v9：右键先“用”方块（开关门、活板门、栅栏门），按着 Shift 时不用、直接放
     if (!this.keys.has('ShiftLeft') && !this.keys.has('ShiftRight')) {
       const s = this.terrain.getBlock(t.x, t.y, t.z)
-      const used = s === null ? null : useBlock(s, this.yaw)
+      // v9.1：拉杆、按钮、中继器
+      const used = s === null ? null : (useRedstone(s) ?? useBlock(s, this.yaw))
       if (used !== null) {
         this.setAndUpdate(t.x, t.y, t.z, used)
         return
@@ -230,8 +229,7 @@ export default class Control {
     const b = this.player.body
     for (const [x, y, z, s] of result)
       if (collides(this.player.pos, b.width, b.height, (bx, by, bz) => (bx === x && by === y && bz === z ? collisionBoxes(s) : EMPTY))) return
-    for (const [x, y, z, s] of result) this.terrain.setBlock(x, y, z, s)
-    for (const [x, y, z] of result) neighborUpdates(this.placeWorld, (nx, ny, nz, ns) => this.terrain.setBlock(nx, ny, nz, ns), x, y, z)
+    for (const [x, y, z, s] of result) this.terrain.updateBlock(x, y, z, s)
   }
 
   /**

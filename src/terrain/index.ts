@@ -12,6 +12,8 @@ import type { ChunkData, WorldInfo } from './worker/protocol'
 import { bakeAll, setModels } from './models'
 import { loadPackTextures, loadResourcePack } from './models/pack'
 import { regionChunk } from '../save/anvil'
+import { neighborUpdates } from './placement'
+import { Redstone } from './redstone'
 import type { WorldSave } from '../save/WorldSave'
 import WorkerPool from './worker/pool'
 import { fixedTime } from '../sky/formulas'
@@ -54,6 +56,26 @@ export default class Terrain {
   private generation = 0
   /** 玩家改过的方块：区块 key → (方块编号 → 方块类型)，编号见 Chunk.index() */
   edits = new Map<string, Map<number, BlockType>>()
+  /** 红石（v9.1）：信号、计划刻（火把、中继器、按钮……） */
+  redstone = new Redstone({
+    get: (x, y, z) => this.getBlock(x, y, z),
+    set: (x, y, z, s) => this.setBlock(x, y, z, s)
+  })
+
+  /**
+   * 玩家改一格（v9 / v9.1）：写进去，邻居的形状跟着变（placement.neighborUpdates），再让红石算一遍
+   */
+  updateBlock(x: number, y: number, z: number, s: number): void {
+    const world = { get: (x: number, y: number, z: number) => this.getBlock(x, y, z) }
+    this.setBlock(x, y, z, s)
+    this.redstone.changed(x, y, z)
+    neighborUpdates(world, (nx, ny, nz, ns) => {
+      this.setBlock(nx, ny, nz, ns)
+      this.redstone.changed(nx, ny, nz)
+    }, x, y, z)
+    this.redstone.process()
+  }
+
   /** 打开着的存档（v8）；null 表示不保存 */
   world: WorldSave | null = null
   /** 原版存档（v8）：从存档读出来的区块数，换成代替品的 / 不认识的原版方块（名字 → 格数） */
@@ -96,6 +118,7 @@ export default class Terrain {
   async init(seed: string, settings: string, edits?: Map<string, Map<number, BlockType>>): Promise<WorldInfo> {
     await this.loadModels()
     this.edits = edits ?? new Map()
+    this.redstone.clear()
     this.fluids.clear()
     this.reload()
     this.info = await this.pool.broadcast('init', { seed, settings })
@@ -257,6 +280,7 @@ export default class Terrain {
   /** 一个游戏 tick（由 Control 的 20 TPS 循环调用）：推进流体 */
   tick(): void {
     this.fluids.tick()
+    this.redstone.tick()
     if (this.daylightCycle) this.dayTime++
   }
 

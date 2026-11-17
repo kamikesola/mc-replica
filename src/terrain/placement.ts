@@ -1,5 +1,6 @@
 import { BLOCK_BY_NAME, BLOCK_OF, BlockType, COLLISION, FLUIDS, FluidKind, NAME_BY_STATE, propOf, stateOf, STURDY, withState } from './blocks'
 import TAGS from './worldgen/feature/blockTags.json'
+import { wireShape } from './redstone'
 
 /**
  * 放方块、方块更新（v9）：原版的 getStateForPlacement 和 updateShape。
@@ -182,6 +183,8 @@ function stairsShape(w: PlaceWorld, x: number, y: number, z: number, s: number):
  */
 export function updateShape(w: PlaceWorld, x: number, y: number, z: number, s: number, d: Dir, n: number): number {
   const name = nameOf(s)
+  // v9.1：红石线的连接（见 redstone.ts）
+  if (name === 'redstone_wire') return wireShape(w, x, y, z, s)
   // 含水的方块：原版在这里安排水的计划刻，我们的流体按格子更新，不用管
   if (inTag('doors', s)) {
     // 原版 DoorBlock.updateShape：上下两半互相抄状态；另一半没了自己也没了

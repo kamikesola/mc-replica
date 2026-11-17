@@ -98,6 +98,12 @@ Chunk（16×16×384）
 `updateShape` 是“邻居变了我变成什么”，`neighborUpdates` 把变化一层层往外传。`Control.placeBlock` / `breakBlock` 调用它们，
 写入走 `Terrain.setBlock`（重建网格、更新光照、记改动）。连接要看邻居“坚固的面”（`STURDY`，原版 isFaceSturdy）。
 
+## 红石（v9.1）
+
+`terrain/redstone.ts`：`Redstone` 有一个待处理队列（neighborChanged）和计划刻表。`Terrain.updateBlock` 写入后调用 `changed` + `process`，
+`Terrain.tick` 调用 `tick`（到期的计划刻 → 再 process）。信号查询（`signalAt`、`bestNeighborSignal`）照原版的强弱充能规则；
+红石线的形状由 `placement.updateShape` 调 `wireShape`。
+
 ## 方块模型（v7.1）
 
 有原版资源包（`resourcepacks/`）时，方块的样子来自原版模型：

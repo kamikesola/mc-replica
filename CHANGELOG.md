@@ -2,6 +2,34 @@
 
 每个版本对应一个 git tag 和一篇文章。数字来自 `tools/` 下的脚本或 `tests/` 里的测试，可以自己复现。
 
+## v9.1 · 红石
+
+文章：[docs/articles/v9.1-红石.md](docs/articles/v9.1-红石.md) · 日志：[docs/notes/v9.1-notes.md](docs/notes/v9.1-notes.md)
+
+**新增**
+
+- `terrain/redstone.ts`：
+  - 信号：原版的 getSignal（弱）/ getDirectSignal（强）、导体转发强充能（Level.getSignal）、getBestNeighborSignal
+  - 红石线：连接（none / side / up，单独一格是十字、一边连着延长成直线、沿方块侧面爬上爬下）、强度（周围的信号和相邻红石线减 1，
+    计算时红石线不给自己“强充能”，原版的 shouldSignal）、给脚下和指着的方块强充能
+  - 拉杆（右键扳）、按钮（右键按，石头 20 tick、木头 30 tick 弹起）、红石块
+  - 红石火把：插着的方块有信号时 2 tick 后熄灭
+  - 中继器：延迟 delay × 2 tick，输出 15，只往前；右键调延迟 1~4
+  - 红石灯：通电马上亮，断电 4 tick 后灭
+  - 门（上下两半任何一半有信号）、活板门、栅栏门：有信号就开
+  - 活塞 / 粘性活塞：推最多 12 个方块（黑曜石、基岩、有方块实体的推不动，花草火把之类被推碎），收回时粘性活塞拉回一个方块；
+    原版的“半连接”（活塞上面那格有信号也算）
+  - 更新：一格变了，通知曼哈顿距离 2 以内的格子（neighborChanged）；火把、中继器、灯、按钮用计划刻
+- `Terrain.updateBlock`：玩家改方块都走这里（写入 → 形状更新 → 红石）；`Terrain.redstone` 每个游戏 tick 推进
+- 测试：`tests/redstone.test.ts`（8 个）
+
+**已知问题**
+
+- 没有比较器、侦测器、压力板、绊线、红石块以外的信号源（阳光探测器……）
+- 活塞没有动画（瞬间完成），不推黏液块 / 蜂蜜块带动的一片；中继器不会被锁
+- 火把不会烧坏（原版短时间内翻转太多次会熄掉）
+- 计划刻不存档：刷新页面时正在倒计时的按钮会一直按着（再按一次就好）
+
 ## v9 · 放方块
 
 文章：[docs/articles/v9-放方块.md](docs/articles/v9-放方块.md) · 日志：[docs/notes/v9-notes.md](docs/notes/v9-notes.md)

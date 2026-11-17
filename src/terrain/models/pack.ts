@@ -15,9 +15,9 @@ import { resourceName, type PackSource } from './bakery'
  */
 
 const json: Record<string, () => Promise<unknown>> =
-  import.meta.env.MODE === 'public' ? {} : import.meta.glob('/resourcepacks/*/assets/minecraft/{blockstates,models/block}/*.json', { import: 'default' })
+  import.meta.env.MODE === 'public' ? {} : import.meta.glob('/resourcepacks/*/assets/minecraft/{blockstates,models/block,models/item,items}/*.json', { import: 'default' })
 const pngs: Record<string, () => Promise<unknown>> =
-  import.meta.env.MODE === 'public' ? {} : import.meta.glob('/resourcepacks/*/assets/minecraft/textures/block/*.png', { query: '?url', import: 'default' })
+  import.meta.env.MODE === 'public' ? {} : import.meta.glob('/resourcepacks/*/assets/minecraft/textures/{block,item}/*.png', { query: '?url', import: 'default' })
 
 /** "/resourcepacks/vanilla/assets/minecraft/models/block/stone.json" → ["vanilla", "models/block/stone"] */
 function split(path: string): [string, string] {
@@ -37,6 +37,10 @@ export interface LoadedPack {
   source: PackSource
   /** 纹理名（"block/stone"）→ 图片地址的加载函数 */
   textures: Map<string, () => Promise<unknown>>
+  /** 任意 JSON（"items/stone"、"models/item/stick"……），按需读（v10：物品图标） */
+  json(path: string): Promise<unknown>
+  /** 任意纹理（"item/stick"），按需读；没有返回 null（v10） */
+  image(name: string): Promise<ImageBitmap | null>
 }
 
 export async function loadResourcePack(): Promise<LoadedPack | null> {
@@ -77,11 +81,34 @@ export async function loadResourcePack(): Promise<LoadedPack | null> {
       })
     )
   }
+  // 纹理按 "block/stone" 这样的名字查（模型里就是这么写的），去掉前面的 textures/
+  const textures = index(pngs, 'textures/')
+  const jsonCache = new Map<string, Promise<unknown>>()
+  const imageCache = new Map<string, Promise<ImageBitmap | null>>()
   return {
     name: names.join(' + '),
     source: { blockstate: (n) => blockstates.get(n), model: (n) => models.get(resourceName(n)) },
-    // 纹理按 "block/stone" 这样的名字查（模型里就是这么写的），去掉前面的 textures/
-    textures: index(pngs, 'textures/')
+    textures,
+    json(path) {
+      let r = jsonCache.get(path)
+      if (!r) jsonCache.set(path, (r = files.get(path)?.() ?? Promise.resolve(undefined)))
+      return r
+    },
+    image(name) {
+      let r = imageCache.get(name)
+      if (!r) {
+        const load = textures.get(name)
+        r = load
+          ? load()
+              .then((url) => fetch(url as string))
+              .then((res) => res.blob())
+              .then((b) => createImageBitmap(b))
+              .catch(() => null)
+          : Promise.resolve(null)
+        imageCache.set(name, r)
+      }
+      return r
+    }
   }
 }
 

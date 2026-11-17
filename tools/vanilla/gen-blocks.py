@@ -8,7 +8,7 @@ v8.1：原版全部方块（1095 种、27866 个状态）的数据，代替 v7 �
   src/terrain/blockList.json        所有方块名
   src/terrain/stateDefs.json        有属性的方块：属性、取值、默认状态（来自数据报告 blocks.json）
   src/terrain/light/lightProps.json 每个状态的 [lightBlock, lightEmission]（所有状态一样时只写一组）
-  src/terrain/blockShapes.json      每个状态的碰撞箱（去重后的形状编号）、破坏时间、坚固的面（v9）
+  src/terrain/blockShapes.json      每个状态的碰撞箱（去重后的形状编号）、破坏时间、坚固的面（v9）、要不要对的工具（v10）
   tools/vanilla/out/light-states.tsv 完整的状态 → 光照表（diff-light.ts --vanilla-blocks 用）
 后三项来自原版服务端本身：tools/vanilla/BlockDump.java 用反射调用 jar 里的方法导出。
 """
@@ -62,13 +62,13 @@ rows = {n: [None] * len(report[n]['states']) for n in names}
 os.makedirs(os.path.join(here, 'out'), exist_ok=True)
 with open(os.path.join(here, 'out', 'light-states.tsv'), 'w') as lf:
     for line in open(out):
-        st, lb, em, hard, boxes, sturdy = line.rstrip('\n').split('\t')
+        st, lb, em, hard, boxes, sturdy, tool = line.rstrip('\n').split('\t')
         m = re.match(r'Block\{(minecraft:[a-z0-9_]+)\}(?:\[([^\]]*)\])?$', st)
         props = dict(kv.split('=') for kv in m.group(2).split(',')) if m.group(2) else {}
         k = key(m.group(1), props)
         lf.write(f'{k}\t{lb}\t{em}\n')
         n, i = index[k]
-        rows[n][i] = (int(lb), int(em), float(hard), boxes, int(sturdy))
+        rows[n][i] = (int(lb), int(em), float(hard), boxes, int(sturdy), int(tool))
 
 def compact(vals):
     """所有状态一样就只写一个"""
@@ -88,9 +88,11 @@ shape_id('0.0,0.0,0.0,1.0,1.0,1.0')  # 1：完整方块
 blocks = {n: compact([shape_id(r[3]) for r in rows[n]]) for n in names}
 hardness = {n: compact([r[2] for r in rows[n]]) for n in names}
 sturdy = {n: compact([r[4] for r in rows[n]]) for n in names}
+tool = {n: compact([r[5] for r in rows[n]]) for n in names}
 with open(os.path.join(root, 'src/terrain/blockShapes.json'), 'w') as f:
     f.write('{\n  "shapes": [\n' + ',\n'.join('    ' + json.dumps(s, separators=(',', ':')) for s in shapes) + '\n  ],\n')
     f.write('  "collision": {\n' + ',\n'.join(f'    {json.dumps(k)}: {json.dumps(v, separators=(",", ":"))}' for k, v in blocks.items()) + '\n  },\n')
     f.write('  "hardness": {\n' + ',\n'.join(f'    {json.dumps(k)}: {json.dumps(v, separators=(",", ":"))}' for k, v in hardness.items()) + '\n  },\n')
-    f.write('  "sturdy": {\n' + ',\n'.join(f'    {json.dumps(k)}: {json.dumps(v, separators=(",", ":"))}' for k, v in sturdy.items()) + '\n  }\n}\n')
+    f.write('  "sturdy": {\n' + ',\n'.join(f'    {json.dumps(k)}: {json.dumps(v, separators=(",", ":"))}' for k, v in sturdy.items()) + '\n  },\n')
+    f.write('  "tool": {\n' + ',\n'.join(f'    {json.dumps(k)}: {json.dumps(v, separators=(",", ":"))}' for k, v in tool.items()) + '\n  }\n}\n')
 print(f'{len(names)} 种方块，{sum(len(r) for r in rows.values())} 个状态，{len(shapes)} 种碰撞箱')

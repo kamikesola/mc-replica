@@ -101,13 +101,15 @@ export default class F3 {
     const r = this.core.renderer.info.render
     const mb = (b: number) => (b / 1048576).toFixed(1) + ' MB'
     const lines = [
-      `mc-replica v9.1 (${fps} fps, 20 TPS)`,
+      `mc-replica v10 (${fps} fps, 20 TPS)`,
       `种子: ${info?.seed ?? '…'}    noise_settings: ${info?.settings ?? '…'}`,
       `区块: ${st.loaded} 已加载（${st.lit} 已点亮）, ${st.loading} 生成中, 上一个用时 ${this.terrain.lastChunkMs.toFixed(0)} ms, 光照+网格 ${this.terrain.lastLightMs.toFixed(0)} ms, 挖/放重建 ${this.terrain.lastRemeshMs.toFixed(1)} ms`,
       `方块数据: ${mb(st.bytes)}（v0 的存法要 ${mb(st.v0Bytes)}）`,
       // v7.1：方块的样子来自哪里
       `资源包: ${this.terrain.resourcePack ?? '没有（程序画的纹理，见 resourcepacks/README.md）'}`,
       this.saveLine(),
+      // v10
+      `模式: ${this.control.mode === 'survival' ? '生存' : '创造'}, 地上的物品 ${this.control.drops.length} 个${this.control.mining ? `, 挖掘 ${Math.floor(this.control.mining.progress * 100)}%` : ''}`,
       `网格: ${this.terrain.greedy ? '贪婪' : '逐面'} [G]${this.terrain.materials.wireframe ? ' 线框' : ''} [K]  ${st.sectionMeshes} 个 section 网格, ${st.quads.toLocaleString()} 个四边形, ${mb(st.meshBytes)}`,
       `本帧: ${r.calls} 次绘制, ${r.triangles.toLocaleString()} 个三角形`,
       `流体: ${st.fluidQueue} 个待更新, 上个 tick 处理 ${this.terrain.fluids.lastProcessed} 个`,

@@ -31,6 +31,9 @@ export interface WorldMeta {
   player: PlayerSave | null
   dayTime: number
   daylightCycle: boolean
+  /** 游戏模式、背包（v10；旧存档没有，按创造模式、默认物品栏） */
+  mode?: 'creative' | 'survival'
+  inventory?: ({ item: string; count: number } | null)[]
   /** 导入的原版存档：level.dat 里的出生点、数据版本、导入时换掉的方块 */
   vanilla?: { spawn: { x: number; y: number; z: number }; dataVersion: number; substituted: Record<string, number>; unknown: Record<string, number> }
 }

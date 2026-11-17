@@ -98,6 +98,12 @@ Chunk（16×16×384）
 `updateShape` 是“邻居变了我变成什么”，`neighborUpdates` 把变化一层层往外传。`Control.placeBlock` / `breakBlock` 调用它们，
 写入走 `Terrain.setBlock`（重建网格、更新光照、记改动）。连接要看邻居“坚固的面”（`STURDY`，原版 isFaceSturdy）。
 
+## 物品和生存模式（v10）
+
+`src/items/`：`items.ts`（物品表、物品 ↔ 方块）、`inventory.ts`（背包）、`loot.ts` + `lootLoader.ts`（战利品表，主线程按需读）、
+`entities.ts`（地上的物品的物理）、`render.ts`（画地上的物品、裂纹）、`mining.ts`（挖掘进度）。
+`Control` 持有背包、游戏模式、地上的物品，每个 tick 推进挖掘和物品；UI 的物品栏 / 背包界面读 `control.inventory`。
+
 ## 红石（v9.1）
 
 `terrain/redstone.ts`：`Redstone` 有一个待处理队列（neighborChanged）和计划刻表。`Terrain.updateBlock` 写入后调用 `changed` + `process`，

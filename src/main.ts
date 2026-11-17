@@ -18,6 +18,7 @@ import Sky from './sky'
 import Terrain from './terrain'
 import UI from './ui'
 import { IdbStore } from './save/store'
+import { CrackOverlay, ItemRenderer } from './items/render'
 import { WorldSave } from './save/WorldSave'
 import { fullStateName, parseState } from './terrain/blocks'
 
@@ -63,6 +64,9 @@ async function start() {
     if (meta!.vanilla && !meta!.player) control.spawnCenter = { x: meta!.vanilla.spawn.x, z: meta!.vanilla.spawn.z }
     terrain.dayTime = meta!.dayTime
     terrain.daylightCycle = meta!.daylightCycle
+    // v10：游戏模式、背包
+    if (meta!.mode) control.setMode(meta!.mode)
+    if (meta!.inventory) control.inventory.load(meta!.inventory)
   }
   const info = await terrain.init(meta?.seed ?? q.get('seed') ?? '42', meta?.settings ?? q.get('settings') ?? '', opened?.edits)
   sky.setDimension(info.settings)
@@ -74,7 +78,7 @@ start()
 function save() {
   const w = terrain.world
   if (!w || !control.spawned) return
-  w.save(terrain.edits, { player: control.saveState, dayTime: terrain.dayTime, daylightCycle: terrain.daylightCycle })
+  w.save(terrain.edits, { player: control.saveState, dayTime: terrain.dayTime, daylightCycle: terrain.daylightCycle, mode: control.mode, inventory: control.inventory.toJSON() })
     .then(() => ui.saves.saved())
     .catch((e) => console.error('保存失败', e))
 }
@@ -94,6 +98,10 @@ function refreshBiomeColors(now: number) {
   })
 }
 
+// v10：地上的物品、裂纹
+const items = new ItemRenderer(core.scene, terrain)
+const crack = new CrackOverlay(core.scene, terrain)
+
 // animation
 const clock = new THREE.Clock()
 ;(function animate() {
@@ -107,6 +115,9 @@ const clock = new THREE.Clock()
   // 天空、光照贴图、雾（v6）
   refreshBiomeColors(performance.now())
   const f = sky.update(terrain.renderTime(control.partialTick), camera, terrain.distance, terrain.info?.minY ?? -64)
+  // v10：地上的物品、挖方块的裂纹
+  items.update(control.drops, control.partialTick, f.lightmap)
+  crack.update(control.mining)
   core.setAirFog(f.color, f.start, f.end)
   terrain.materials.setLightmap(f.lightmap, sky.dim === 'nether')
 

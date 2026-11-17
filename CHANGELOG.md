@@ -2,6 +2,36 @@
 
 每个版本对应一个 git tag 和一篇文章。数字来自 `tools/` 下的脚本或 `tests/` 里的测试，可以自己复现。
 
+## v10 · 生存模式：挖掘、掉落、背包
+
+文章：[docs/articles/v10-生存模式.md](docs/articles/v10-生存模式.md) · 日志：[docs/notes/v10-notes.md](docs/notes/v10-notes.md)
+
+**新增**
+
+- 游戏模式（菜单里选，随存档保存）：创造（和以前一样）/ 生存（不能飞、挖要时间、掉东西、放方块消耗背包里的）
+- 物品（`src/items/`）：
+  - `itemList.json`：原版 1385 种物品和最大堆叠数（`tools/vanilla/gen-items.py`，来自数据报告）
+  - 物品 ↔ 方块：同名的直接对应，加上红石粉 → 红石线、小麦种子 → 小麦等例外；选方块时贴墙的火把 → 火把
+  - 背包 36 格（0..8 物品栏）：原版 Inventory.add 的叠放顺序；背包界面（E）的左键拿起 / 放下 / 交换、右键拿一半 / 放一个
+- 挖掘（`items/mining.ts`）：每 tick 进度 = 1 / 硬度 / (能掉东西 ? 30 : 100)，空中、水下各慢 5 倍；挖完一块等 5 tick；裂纹（原版 destroy_stage_0..9）
+- 要不要对的工具（`requiresCorrectToolForDrops`）：`BlockDump` 认出方法导出到 `blockShapes.json` 的 `tool`；空手挖石头、矿石什么都不掉
+- 战利品表（`items/loot.ts`）：池、rolls、条目（item / alternatives / group / sequence / empty）、条件（random_chance、table_bonus、
+  block_state_property、survives_explosion、entity_properties、inverted、any_of、all_of；match_tool 一律不满足）、
+  函数（set_count、limit_count、apply_bonus 的 binomial_with_bonus_count）。没有战利品表时掉方块自己
+- 地上的物品（`items/entities.ts`）：原版 ItemEntity 的重力、摩擦、水里上浮、6000 tick 消失；方块掉的从中心附近弹出来（popResource），
+  玩家扔的（Q / Ctrl+Q）沿视线飞出去；玩家碰到就捡（拾取延迟 10 / 40 tick）
+- 物品图标（`ui/icons.ts`）：读资源包的 `items/*.json`（1.21.4 的物品模型定义）→ 方块模型画成斜 45° 的立方体，物品模型画成平面（含草色等染色）
+- 存档：游戏模式、背包
+- 工具：`extract-assets.py` 多拷物品的三个目录，并把战利品表拷进 `datapacks/vanilla/loot_table/blocks/`
+- 测试：`tests/items.test.ts`（7 个）
+
+**已知问题**
+
+- 没有工具、合成（v10.1），所以生存模式只能空手：石头、矿石挖不出东西
+- 地上的物品画成朝着镜头的图标（原版是会转的小方块 / 有厚度的薄片），离得近的同种物品不会合成一堆
+- 没有生命值、饥饿、摔落伤害
+- 地上的物品不存档
+
 ## v9.1 · 红石
 
 文章：[docs/articles/v9.1-红石.md](docs/articles/v9.1-红石.md) · 日志：[docs/notes/v9.1-notes.md](docs/notes/v9.1-notes.md)

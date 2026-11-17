@@ -447,7 +447,7 @@ for (let b = 24; b <= 31; b++) NAME_BY_BLOCK[b] = 'minecraft:lava'
  * 它们的形状、碰撞箱、光照都来自原版服务端（tools/vanilla/gen-blocks.py），样子来自资源包里的模型（v7.1）。
  * 没有资源包时，程序纹理按名字挑一张差不多的（木头类用木板、石头类用圆石……），形状按碰撞箱粗略地分成方块 / 薄片 / 十字。
  */
-const SHAPES_DATA = SHAPES_JSON as unknown as { shapes: number[][]; collision: Record<string, number | number[]>; hardness: Record<string, number | number[]>; sturdy: Record<string, number | number[]> }
+const SHAPES_DATA = SHAPES_JSON as unknown as { shapes: number[][]; collision: Record<string, number | number[]>; hardness: Record<string, number | number[]>; sturdy: Record<string, number | number[]>; tool: Record<string, number | number[]> }
 const RAW_DEFS = STATE_DEFS as unknown as Record<string, { props: [string, string[]][]; default: Record<string, string> }>
 
 /** 原版方块的默认状态在它所有状态里的下标（原版顺序） */
@@ -656,4 +656,10 @@ export const HARDNESS: Float32Array = Float32Array.from({ length: STATE_COUNT },
 export const STURDY: Uint8Array = Uint8Array.from({ length: STATE_COUNT }, (_, s) => {
   const v = SHAPES_DATA.sturdy[NAME_BY_STATE[s]]
   return v === undefined ? (SOLID[s] ? 63 : 0) : perVanillaState(v, vanillaIndex(STATES, s))
+})
+
+/** 要用对的工具挖才掉东西（v10，原版 requiresCorrectToolForDrops）：石头、矿石、黑曜石……空手挖得慢，而且什么都不掉 */
+export const NEEDS_TOOL: Uint8Array = Uint8Array.from({ length: STATE_COUNT }, (_, s) => {
+  const v = SHAPES_DATA.tool[NAME_BY_STATE[s]]
+  return v === undefined ? 0 : perVanillaState(v, vanillaIndex(STATES, s))
 })

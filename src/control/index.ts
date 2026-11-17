@@ -3,7 +3,12 @@ import type { PlayerSave } from '../save/store'
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js'
 import Player, { PHYSICS } from '../player'
 import type Terrain from '../terrain'
-import { BLOCK_OF, BLOCKS, BlockType, COLLISION, COLLISION_SHAPES, FLUIDS, FluidKind, HOTBAR, NAME_BY_STATE } from '../terrain/blocks'
+import { BLOCK_OF, BLOCKS, BlockType, COLLISION, COLLISION_SHAPES, FLUIDS, FluidKind, HARDNESS, HOTBAR, NAME_BY_BLOCK, NAME_BY_STATE, NEEDS_TOOL } from '../terrain/blocks'
+import { ItemEntity, popResource, throwItem } from '../items/entities'
+import { Inventory } from '../items/inventory'
+import { destroyProgress } from '../items/mining'
+import { blockOfItem, itemOfBlock, type ItemStack } from '../items/items'
+import { hasLootTables, loadLootTable, lootTables } from '../items/lootLoader'
 import { dirOf, placement, useBlock, type PlaceWorld } from '../terrain/placement'
 import { useRedstone } from '../terrain/redstone'
 import { tickPlayer, type MoveInput, type MoveWorld } from './movement'
@@ -49,8 +54,26 @@ export default class Control {
   slot = 0
   /** 准星打在方块面上的那一点（世界坐标，v9） */
   hit: [number, number, number] = [0, 0, 0]
-  /** 物品栏的 9 格（v8.1 起可以用鼠标中键换成准星指着的方块） */
-  hotbar: number[] = [...HOTBAR]
+  /**
+   * 游戏模式（v10）：创造（瞬间挖掉、方块用不完、能飞、不掉东西）或生存（挖要时间、掉东西、放方块要用背包里的）
+   */
+  mode: 'creative' | 'survival' = 'creative'
+  /** 背包（v10）：0..8 是物品栏 */
+  inventory = new Inventory()
+  /** 背包界面里“拿在鼠标上”的东西（v10） */
+  cursor: ItemStack | null = null
+  /** 地上的物品（v10） */
+  drops: ItemEntity[] = []
+  /** 正在挖的方块（v10，生存模式）：位置、挖了多少（0..1） */
+  mining: { x: number; y: number; z: number; state: number; progress: number } | null = null
+  /** 挖掉一块后要等几个 tick 才能挖下一块（原版 destroyDelay = 5） */
+  private destroyDelay = 0
+  private leftDown = false
+
+  /** 当前格子里的物品 */
+  get held(): ItemStack | null {
+    return this.inventory.slots[this.slot]
+  }
   /** 准星对准的方块 */
   target: RayHit | null = null
   /** 最远能够到 5 格（原版生存模式 4.5，这里放宽一点） */
@@ -99,6 +122,18 @@ export default class Control {
     }
     this.initKeyboard()
     this.initMouse()
+    // 创造模式的默认物品栏：v1 起的那 9 种方块
+    HOTBAR.forEach((b, i) => {
+      const item = itemOfBlock(b)
+      if (item) this.inventory.slots[i] = { item, count: 1 }
+    })
+  }
+
+  /** 换模式（v10）：生存模式不能飞 */
+  setMode(mode: 'creative' | 'survival'): void {
+    this.mode = mode
+    if (mode === 'survival') this.player.flying = false
+    this.mining = null
   }
 
   /** 玩家脚底位置（F3、噪声图用） */
@@ -137,6 +172,7 @@ export default class Control {
 
       if (e.code === 'KeyW' && doubleTap) this.sprintByDoubleTap = true
       if ((e.code === 'Space' && doubleTap) || e.code === 'KeyF') this.toggleFly()
+      if (e.code === 'KeyQ') this.dropHeld(e.ctrlKey)
       if (e.code.startsWith('Digit')) {
         const n = Number(e.code.slice(5))
         if (n >= 1 && n <= 9) this.slot = n - 1
@@ -153,10 +189,15 @@ export default class Control {
 
   initMouse = () => {
     document.addEventListener('mousedown', (e) => {
+      if (e.button === 0) this.leftDown = true
       if (!this.control.isLocked || !this.target) return
-      if (e.button === 0) this.breakBlock()
+      // 创造模式点一下就挖掉；生存模式按住左键慢慢挖（在 tick 里）
+      if (e.button === 0 && this.mode === 'creative') this.breakBlock()
       if (e.button === 2) this.placeBlock()
       if (e.button === 1) this.pickBlock()
+    })
+    document.addEventListener('mouseup', (e) => {
+      if (e.button === 0) this.leftDown = false
     })
     document.addEventListener('contextmenu', (e) => e.preventDefault())
     document.addEventListener(
@@ -170,6 +211,7 @@ export default class Control {
   }
 
   toggleFly = () => {
+    if (this.mode === 'survival') return
     this.player.flying = !this.player.flying
     this.player.velocity.y = 0
   }
@@ -201,6 +243,80 @@ export default class Control {
     if (type === null || !BLOCKS[BLOCK_OF[type]].breakable) return
     // 含水的方块挖掉以后留下水（原版：方块没了，流体状态还在）
     this.setAndUpdate(t.x, t.y, t.z, FLUIDS[type].kind === FluidKind.water && FLUIDS[type].source && BLOCK_OF[type] !== BlockType.water ? BlockType.water : BlockType.air)
+    if (this.mode === 'survival') this.dropLoot(t.x, t.y, t.z, type)
+  }
+
+  /**
+   * 生存模式挖掉方块后掉东西（v10）：按原版的战利品表（items/loot.ts）；要用对的工具的方块空手挖什么都不掉。
+   * 没有战利品表（没放数据包）时掉方块自己
+   */
+  private async dropLoot(x: number, y: number, z: number, s: number) {
+    if (NEEDS_TOOL[s]) return
+    const name = NAME_BY_BLOCK[BLOCK_OF[s]].replace('minecraft:', 'minecraft:blocks/')
+    let stacks: ItemStack[] | null = null
+    if (hasLootTables()) {
+      await loadLootTable(name)
+      stacks = lootTables.blockDrops(s)
+    }
+    if (stacks === null) {
+      const item = itemOfBlock(s)
+      stacks = item ? [{ item, count: 1 }] : []
+    }
+    for (const st of stacks) this.drops.push(popResource(x, y, z, st))
+  }
+
+  /** 生存模式挖方块（v10，原版 MultiPlayerGameMode.continueDestroyBlock）：按住左键，每 tick 加一点进度（items/mining.ts） */
+  private tickMining() {
+    if (this.destroyDelay > 0) {
+      this.destroyDelay--
+      return
+    }
+    const t = this.target
+    if (!this.leftDown || !t || !this.control.isLocked) {
+      this.mining = null
+      return
+    }
+    const s = this.terrain.getBlock(t.x, t.y, t.z)
+    if (s === null) return
+    const m = this.mining
+    if (!m || m.x !== t.x || m.y !== t.y || m.z !== t.z || m.state !== s) this.mining = { x: t.x, y: t.y, z: t.z, state: s, progress: 0 }
+    this.mining!.progress += destroyProgress(HARDNESS[s], NEEDS_TOOL[s] === 1, this.player.onGround, this.player.underWater)
+    if (this.mining!.progress >= 1) {
+      this.breakBlock()
+      this.mining = null
+      this.destroyDelay = 5
+    }
+  }
+
+  /** 地上的物品：物理、被捡起来（原版 Player.touch → ItemEntity.playerTouch：玩家的碰撞箱四周放大 1、上下 0.5） */
+  private tickDrops() {
+    const inWater = (p: Vec3) => {
+      const b = this.terrain.getBlock(Math.floor(p.x), Math.floor(p.y), Math.floor(p.z))
+      return b !== null && FLUIDS[b].kind === FluidKind.water
+    }
+    const pb = AABB.body(this.player.pos, this.player.body.width, this.player.body.height)
+    const reach = new AABB(pb.minX - 1, pb.minY - 0.5, pb.minZ - 1, pb.maxX + 1, pb.maxY + 0.5, pb.maxZ + 1)
+    for (const d of this.drops) {
+      // 没加载的区块里的物品不动
+      if (this.terrain.getBlock(Math.floor(d.pos.x), Math.floor(d.pos.y), Math.floor(d.pos.z)) === null) continue
+      d.tick(this.world.shape, inWater)
+      const b = d.box
+      if (d.pickupDelay === 0 && b.maxX > reach.minX && b.minX < reach.maxX && b.maxY > reach.minY && b.minY < reach.maxY && b.maxZ > reach.minZ && b.minZ < reach.maxZ) {
+        const left = this.inventory.add(d.stack.item, d.stack.count)
+        if (left === 0) d.removed = true
+        else d.stack.count = left
+      }
+    }
+    this.drops = this.drops.filter((d) => !d.removed)
+  }
+
+  /** Q：扔掉手上的一个（Ctrl+Q 扔一整组） */
+  dropHeld(all = false) {
+    const st = this.inventory.take(this.slot, all ? 64 : 1)
+    if (!st) return
+    if (this.mode === 'creative' && !all) this.inventory.add(st.item, st.count) // 创造模式手上的不会少
+    const p = this.player.pos
+    this.drops.push(throwItem({ x: p.x, y: p.y + this.eye, z: p.z }, this.yaw, this.head.rotation.x, st))
   }
 
   placeBlock = () => {
@@ -215,9 +331,13 @@ export default class Control {
         return
       }
     }
+    // v10：手上的物品放下去是哪个方块（木棍、钻石之类放不下去）
+    const held = this.held
+    const block = held && blockOfItem(held.item)
+    if (block === undefined || block === null) return
     // v9：状态按原版的规则定（terrain/placement.ts）：楼梯的朝向和上下、台阶叠放、门和床放两格、火把插墙上……
     const result = placement(this.placeWorld, {
-      block: this.hotbar[this.slot],
+      block,
       clicked: [t.x, t.y, t.z],
       face: dirOf(t.nx, t.ny, t.nz),
       hit: this.hit,
@@ -230,6 +350,7 @@ export default class Control {
     for (const [x, y, z, s] of result)
       if (collides(this.player.pos, b.width, b.height, (bx, by, bz) => (bx === x && by === y && bz === z ? collisionBoxes(s) : EMPTY))) return
     for (const [x, y, z, s] of result) this.terrain.updateBlock(x, y, z, s)
+    if (this.mode === 'survival') this.inventory.take(this.slot, 1)
   }
 
   /**
@@ -241,10 +362,16 @@ export default class Control {
     if (!t) return
     const s = this.terrain.getBlock(t.x, t.y, t.z)
     if (s === null || s === BlockType.air || isPureFluid(s)) return
-    const b = BLOCK_OF[s]
-    const i = this.hotbar.indexOf(b)
-    if (i >= 0) this.slot = i
-    else this.hotbar[this.slot] = b
+    // v10：选的是物品（贴墙的火把 → 火把，红石线 → 红石粉）
+    const item = itemOfBlock(s)
+    if (!item) return
+    const slots = this.inventory.slots
+    const i = slots.findIndex((st) => st?.item === item)
+    if (i >= 0 && i < 9) this.slot = i
+    else if (i >= 9) {
+      // 生存模式：背包里有，换到当前格子（原版 pickSlot）
+      ;[slots[this.slot], slots[i]] = [slots[i], slots[this.slot]]
+    } else if (this.mode === 'creative') slots[this.slot] = { item, count: 1 }
   }
 
   // ---------------------------------------------------------------- 出生点
@@ -321,6 +448,9 @@ export default class Control {
     const p = this.player
     tickPlayer(p, this.readInput(), this.world)
     this.terrain.tick()
+    // v10：挖方块、地上的物品
+    if (this.mode === 'survival') this.tickMining()
+    this.tickDrops()
     if (!p.sprinting) this.sprintByDoubleTap = false // 撞墙停下后，要重新双击才能再跑
 
     this.prevEye = this.eye

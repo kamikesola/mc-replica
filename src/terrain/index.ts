@@ -10,7 +10,7 @@ import { updateLight, type LightWorld } from './light/LightUpdater'
 import { meshSection, N, nIndex, POSITION_SCALE, type SectionMesh } from './mesh/mesher'
 import type { ChunkData, WorldInfo } from './worker/protocol'
 import { bakeAll, setModels } from './models'
-import { loadPackTextures, loadResourcePack } from './models/pack'
+import { loadPackTextures, loadResourcePack, type LoadedPack } from './models/pack'
 import { regionChunk } from '../save/anvil'
 import { neighborUpdates } from './placement'
 import { Redstone } from './redstone'
@@ -128,11 +128,14 @@ export default class Terrain {
 
   /** 原版资源包（v7.1）：有就读进来、烘焙模型、做纹理数组，发给每个 Worker；只做一次 */
   private modelsReady: Promise<void> | null = null
+  /** 读进来的资源包（v10：物品图标、挖掘的裂纹也从这里取） */
+  pack: LoadedPack | null = null
   /** 用的是哪个资源包（F3 显示），没有是 null */
   resourcePack: string | null = null
   loadModels(): Promise<void> {
     this.modelsReady ??= (async () => {
       const pack = await loadResourcePack()
+      this.pack = pack
       const models = pack ? bakeAll(pack.source) : null
       setModels(models)
       if (pack && models) {

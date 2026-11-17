@@ -2,8 +2,8 @@ import type Control from '../control'
 import type Core from '../core'
 import type Terrain from '../terrain'
 import type Sky from '../sky'
-import { BLOCKS } from '../terrain/blocks'
-import { blockIcon } from './icons'
+import { itemIcon } from './icons'
+import { itemName, type ItemStack } from '../items/items'
 import type { WorldInfo } from '../terrain/worker/protocol'
 import { $, isMobile } from '../utils'
 import F3 from './debug/f3'
@@ -35,7 +35,6 @@ export default class UI {
   private frames = 0
   private fps = 0
   private fpsTime = performance.now()
-  private lastSlot = -1
   private lastHotbar = ''
   private timeInput: HTMLInputElement | null = null
 
@@ -51,6 +50,10 @@ export default class UI {
     this.noiseMap = new NoiseMap(terrain, control)
     this.initMenu()
     this.initHotbar()
+    this.initInventory()
+    // v10：游戏模式
+    const mode = $<HTMLSelectElement>('modeSelect')
+    mode.addEventListener('change', () => this.control.setMode(mode.value as 'creative' | 'survival'))
   }
 
   // ---------------------------------------------------------------- 菜单
@@ -69,6 +72,7 @@ export default class UI {
     })
     this.control.control.addEventListener('lock', () => this.menu.classList.add('hidden'))
     this.control.control.addEventListener('unlock', () => {
+      if (this.inventoryOpen) return // v10：打开背包时也会松开鼠标，但不显示菜单
       this.menu.classList.remove('hidden')
       this.playButton.textContent = '继续游戏'
     })
@@ -119,6 +123,7 @@ export default class UI {
     this.noiseMap.setFields(info.routerFields)
     this.setDistance(this.terrain.distance)
     this.saves.refresh()
+    $<HTMLSelectElement>('modeSelect').value = this.control.mode
     const w = this.terrain.world
     if (w) $('saveStatus').textContent = `当前存档：${w.meta.name}`
   }
@@ -126,10 +131,86 @@ export default class UI {
   // ---------------------------------------------------------------- 物品栏
 
   initHotbar = () => {
-    // 每格画一个小方块图标（用的就是方块自己的纹理，见 ui/icons.ts）
-    this.hotbar.innerHTML = this.control.hotbar.map(
-      (type, i) => `<div class="slot" title="${BLOCKS[type].name}"><img src="${blockIcon(type)}" alt=""><span>${i + 1}</span></div>`
-    ).join('')
+    // v10：物品栏是背包的前 9 格，每格一个物品图标（ui/icons.ts）和数量
+    this.hotbar.innerHTML = Array.from({ length: 9 }, (_, i) => `<div class="slot"><img alt=""><b></b><span>${i + 1}</span></div>`).join('')
+  }
+
+  /** 把一组格子画成背包里的物品（图标是异步的，读好了再填进去） */
+  private fillSlots(els: ArrayLike<Element>, stacks: (ItemStack | null)[]) {
+    for (let i = 0; i < els.length; i++) {
+      const el = els[i] as HTMLElement
+      const st = stacks[i]
+      const img = el.querySelector('img')!
+      const count = el.querySelector('b')!
+      el.title = st ? itemName(st.item) : ''
+      count.textContent = st && st.count > 1 ? String(st.count) : ''
+      if (!st) {
+        img.removeAttribute('src')
+        img.dataset.item = ''
+        continue
+      }
+      if (img.dataset.item === st.item) continue
+      img.dataset.item = st.item
+      itemIcon(st.item, this.terrain.pack).then((url) => {
+        if (img.dataset.item === st.item) img.src = url
+      })
+    }
+  }
+
+  // ---------------------------------------------------------------- 背包界面（v10，E 键）
+
+  inventoryOpen = false
+  private invEl = $('inventory')
+
+  initInventory = () => {
+    const grid = (n: number, from: number) => Array.from({ length: n }, (_, i) => `<div class="slot" data-i="${from + i}"><img alt=""><b></b></div>`).join('')
+    $('invMain').innerHTML = grid(27, 9)
+    $('invBar').innerHTML = grid(9, 0)
+    this.invEl.addEventListener('mousedown', (e) => {
+      const el = (e.target as HTMLElement).closest('.slot') as HTMLElement | null
+      if (!el) return
+      this.control.cursor = this.control.inventory.click(Number(el.dataset.i), this.control.cursor, e.button === 2)
+      this.renderInventory()
+    })
+    this.invEl.addEventListener('mousemove', (e) => {
+      const c = $('invCursor')
+      c.style.left = `${e.clientX - 24}px`
+      c.style.top = `${e.clientY - 24}px`
+    })
+    document.addEventListener('keydown', (e) => {
+      if (e.code === 'KeyE' && this.control.control.isLocked && !e.repeat) this.openInventory()
+      else if ((e.code === 'KeyE' || e.code === 'Escape') && this.inventoryOpen) this.closeInventory(e.code === 'KeyE')
+    })
+  }
+
+  openInventory() {
+    this.inventoryOpen = true
+    this.invEl.classList.remove('hidden')
+    this.renderInventory()
+    this.control.control.unlock()
+  }
+
+  /** 关掉背包；手上拿着的东西放回背包（放不下就扔掉） */
+  closeInventory(relock: boolean) {
+    this.inventoryOpen = false
+    this.invEl.classList.add('hidden')
+    const c = this.control.cursor
+    if (c) {
+      const left = this.control.inventory.add(c.item, c.count)
+      this.control.cursor = null
+      if (left) {
+        this.control.inventory.slots[this.control.slot] ??= { item: c.item, count: left }
+      }
+    }
+    if (relock) this.control.control.lock()
+    else this.menu.classList.remove('hidden')
+  }
+
+  private renderInventory() {
+    const inv = this.control.inventory.slots
+    this.fillSlots(document.querySelectorAll('#invMain .slot'), inv.slice(9))
+    this.fillSlots(document.querySelectorAll('#invBar .slot'), inv.slice(0, 9))
+    this.fillSlots([$('invCursor')], [this.control.cursor])
   }
 
   // ---------------------------------------------------------------- 每帧
@@ -144,17 +225,16 @@ export default class UI {
       this.fpsTime = now
     }
 
-    // v8.1：鼠标中键换了物品栏里的方块时重画
-    const key = this.control.hotbar.join()
+    // v10：物品栏（背包的前 9 格）有变化时重画
+    const inv = this.control.inventory.slots
+    const key = inv.map((st) => (st ? `${st.item}*${st.count}` : '')).join() + `|${this.control.cursor?.item}*${this.control.cursor?.count}|${this.control.slot}`
     if (key !== this.lastHotbar) {
       this.lastHotbar = key
-      this.initHotbar()
-      this.lastSlot = -1
-    }
-    if (this.control.slot !== this.lastSlot) {
-      this.lastSlot = this.control.slot
-      this.hotbar.querySelectorAll('.slot').forEach((el, i) => el.classList.toggle('on', i === this.lastSlot))
-      $('slotName').textContent = BLOCKS[this.control.hotbar[this.lastSlot]].name
+      this.fillSlots(this.hotbar.querySelectorAll('.slot'), inv.slice(0, 9))
+      this.hotbar.querySelectorAll('.slot').forEach((el, i) => el.classList.toggle('on', i === this.control.slot))
+      const held = inv[this.control.slot]
+      $('slotName').textContent = held ? itemName(held.item) : ''
+      if (this.inventoryOpen) this.renderInventory()
     }
 
     // 加载进度：出生前显示在菜单里

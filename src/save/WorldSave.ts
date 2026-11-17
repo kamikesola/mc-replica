@@ -91,7 +91,7 @@ export class WorldSave {
    * 把改过的区块和世界信息存回去。同一时间只存一次：上一次还没存完时，等它存完再存这一次
    * （不能直接返回上一次的 Promise —— 那一次存的是旧的玩家位置，这期间改的方块也不在里面）
    */
-  async save(edits: Map<string, Map<number, number>>, state: { player: PlayerSave | null; dayTime: number; daylightCycle: boolean }): Promise<void> {
+  async save(edits: Map<string, Map<number, number>>, state: { player: PlayerSave | null; dayTime: number; daylightCycle: boolean } & Partial<Pick<WorldMeta, 'mode' | 'inventory'>>): Promise<void> {
     while (this.saving) await this.saving.catch(() => {})
     const keys = [...this.dirty]
     this.dirty.clear()

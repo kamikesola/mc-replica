@@ -280,3 +280,91 @@ canvas {
   font: 11px ui-monospace, Consolas, monospace;
   color: #ccc;
 }
+
+/* v10：物品数量、背包 */
+#hotbar .slot b,
+#inventory .slot b {
+  position: absolute;
+  right: 3px;
+  bottom: 1px;
+  color: #fff;
+  font-size: 13px;
+  text-shadow: 1px 1px 0 #3f3f3f;
+  pointer-events: none;
+}
+#inventory {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+  user-select: none;
+}
+#inventory.hidden {
+  display: none;
+}
+#inventory .panel {
+  background: #c6c6c6;
+  border: 3px solid #555;
+  border-radius: 4px;
+  padding: 12px 14px;
+  color: #3f3f3f;
+}
+#inventory h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+#inventory .grid {
+  display: grid;
+  grid-template-columns: repeat(9, 44px);
+  gap: 2px;
+}
+#inventory .grid.bar {
+  margin-top: 10px;
+}
+#inventory .slot {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  background: #8b8b8b;
+  border: 2px solid;
+  border-color: #373737 #fff #fff #373737;
+  box-sizing: border-box;
+}
+#inventory .slot:hover {
+  background: #a5a5a5;
+}
+#inventory .slot img {
+  position: absolute;
+  inset: 4px;
+  width: 32px;
+  height: 32px;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+#inventory .slot img:not([src]) {
+  display: none;
+}
+#hotbar .slot img:not([src]) {
+  visibility: hidden;
+}
+#invCursor {
+  position: fixed !important;
+  pointer-events: none;
+  background: none !important;
+  border: none !important;
+}
+#inventory .hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #555;
+}
+#menu label.mode {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 10px 0;
+  color: #d6dbe0;
+}

@@ -5,7 +5,7 @@
 ## 用原版 1.21.4 的方块模型和纹理
 
 1. 找到你自己的客户端 jar：`.minecraft/versions/1.21.4/1.21.4.jar`（官方启动器下载过 1.21.4 就有），它就是一个 zip。
-2. 拷出三个目录，任选一种方法：
+2. 拷出六个目录（v10 起多了物品的三个），任选一种方法：
 
 ```text
 python3 tools/vanilla/extract-assets.py <你的 1.21.4.jar>
@@ -21,6 +21,9 @@ resourcepacks/
         blockstates/       方块状态 → 模型（oak_log.json：axis=x 用横着的模型，转 90°）
         models/block/      方块模型（盒子、面、纹理、旋转）
         textures/block/    方块纹理（.png）
+        items/             物品 → 模型（v10：物品图标）
+        models/item/       物品模型（v10）
+        textures/item/     物品纹理（v10）
 ```
 
 3. 重启 `npm run dev`。F3 里“资源包”一行会显示 `vanilla`。

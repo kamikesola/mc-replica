@@ -20,6 +20,7 @@ datapacks/
       configured_carver/...   ← v5.1：雕刻器（洞穴、峡谷）
       processor_list/...      ← v5.2：结构处理器（化石）
     structure/...             ← v5.2：结构模板（化石），用 tools/vanilla/structures-to-json.ts 从 jar 的 .nbt 转成 JSON
+    loot_table/blocks/...     ← v10：方块的战利品表（生存模式挖掉方块掉什么），从 jar 的 data/minecraft/loot_table/blocks/ 拷
 ```
 
 ```text

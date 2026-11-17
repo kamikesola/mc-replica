@@ -7,6 +7,7 @@ import java.util.zip.*;
  *
  * 输出一行一个状态：状态  lightBlock  lightEmission  破坏时间  碰撞箱（x0,y0,z0,x1,y1,z1;...）  坚固的面
  * 坚固的面（v9）：6 位，第 i 位 = Direction.values()[i]（下 上 北 南 西 东）这一面能不能撑住东西（isFaceSturdy，栅栏、墙连不连就看它）
+ * 最后一列（v10）：1 = 要用对的工具挖才掉东西（requiresCorrectToolForDrops：石头、矿石、黑曜石……），0 = 空手也掉
  * jar 是混淆过的。v6 的 LightDump 用的名字（ab.a、akx.a、mb.e、djn、dwy.g/k）是手查的；
  * 碰撞箱和破坏时间的方法名不手查，用反射按“签名 + 已知方块的值”认出来：
  *   碰撞箱：参数 (BlockGetter, BlockPos)、返回 VoxelShape 的方法里，栅栏高 1.5、一层雪是空的那个
@@ -91,8 +92,24 @@ public class BlockDump {
           if (ok) { sturdy = m; dirs = d; break search; }
         } catch (Throwable t) {}
       }
-    if (collision == null || destroy == null || sturdy == null) throw new RuntimeException("没认出方法：collision=" + collision + " destroy=" + destroy);
-    System.err.println("碰撞箱 " + collision + "\n破坏时间 " + destroy + "\n坚固的面 " + sturdy);
+    // 要不要对的工具：没有参数、返回 boolean 的方法里，石头、黑曜石、铁矿、深板岩是，泥土、原木、沙子、玻璃、草方块不是的那个
+    Method tool = null;
+    String[] yes = {"Block{minecraft:stone}", "Block{minecraft:obsidian}", "Block{minecraft:iron_ore}", "Block{minecraft:deepslate}[axis=y]"};
+    String[] no = {"Block{minecraft:dirt}", "Block{minecraft:oak_log}[axis=y]", "Block{minecraft:sand}", "Block{minecraft:glass}", "Block{minecraft:grass_block}[snowy=false]"};
+    search2:
+    for (Class<?> c = dwy.class; c != null; c = c.getSuperclass())
+      for (Method m : c.getDeclaredMethods()) {
+        if (m.getParameterCount() != 0 || m.getReturnType() != boolean.class || Modifier.isStatic(m.getModifiers())) continue;
+        try {
+          m.setAccessible(true);
+          boolean ok = true;
+          for (String n : yes) ok &= (boolean) m.invoke(byName.get(n));
+          for (String n : no) ok &= !(boolean) m.invoke(byName.get(n));
+          if (ok) { tool = m; break search2; }
+        } catch (Throwable t) {}
+      }
+    if (collision == null || destroy == null || sturdy == null || tool == null) throw new RuntimeException("没认出方法：collision=" + collision + " destroy=" + destroy);
+    System.err.println("碰撞箱 " + collision + "\n破坏时间 " + destroy + "\n坚固的面 " + sturdy + "\n要对的工具 " + tool);
 
     StringBuilder out = new StringBuilder();
     for (djn b : blocks)
@@ -103,7 +120,7 @@ public class BlockDump {
         for (double[] a : boxes(collision.invoke(s, getter, pos))) boxes.add(a[0] + "," + a[1] + "," + a[2] + "," + a[3] + "," + a[4] + "," + a[5]);
         int mask = 0;
         for (int i = 0; i < 6; i++) if ((boolean) sturdy.invoke(s, getter, pos, dirs[i])) mask |= 1 << i;
-        out.append(String.join(";", boxes)).append('\t').append(mask).append('\n');
+        out.append(String.join(";", boxes)).append('\t').append(mask).append('\t').append((boolean) tool.invoke(s) ? 1 : 0).append('\n');
       }
     java.nio.file.Files.writeString(java.nio.file.Path.of(args[0]), out.toString());
   }

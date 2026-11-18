@@ -2,6 +2,30 @@
 
 每个版本对应一个 git tag 和一篇文章。数字来自 `tools/` 下的脚本或 `tests/` 里的测试，可以自己复现。
 
+## v10.1 · 合成和工具
+
+文章：[docs/articles/v10.1-合成和工具.md](docs/articles/v10.1-合成和工具.md) · 日志：[docs/notes/v10.1-notes.md](docs/notes/v10.1-notes.md)
+
+**新增**
+
+- 配方（`items/recipes.ts`）：原版 964 个工作台配方（有序 655、无序 277、换色 32），`tools/vanilla/gen-items.py` 从 jar 生成 `recipes.json`。
+  有序配方裁掉空行空列后比较、支持左右镜像；无序配方用二分图匹配；换色配方（潜影盒、收纳袋染色）
+- 合成格子（`items/crafting.ts`）：背包里 2×2，右键工作台打开 3×3；结果格的点击规则、Shift 连续合成、剩余物（牛奶桶 → 空桶）、
+  关界面时退回背包
+- 工具（`items/tools.ts`）：原版 1.21.4 的 `minecraft:tool` 组件（33 种工具，`tools.json`）：挖掘速度、对的工具才掉东西、
+  耐久（`damage_per_block`，剑 2），耐久条；创造模式拿剑挖不动
+- 战利品表的 `match_tool`：看手上的物品（剪刀剪树叶 / 草，紫水晶簇用镐）；附魔条件仍然不满足
+- 背包：Shift + 点在物品栏和背包之间挪；带耐久的物品不和新的叠在一起（`sameItem`）
+- F3：手上工具对准星方块的速度、耐久
+- 测试：`tests/crafting.test.ts`（10 个）
+
+**已知问题**
+
+- 没有熔炉、切石机、锻造台，没有特殊配方（烟花、地图、旗帜、修理……）
+- 没有配方书，合成格子不能按住拖动分配
+- 没有附魔
+- 背包、合成界面只能用鼠标，不能用数字键把物品换到物品栏
+
 ## v10 · 生存模式：挖掘、掉落、背包
 
 文章：[docs/articles/v10-生存模式.md](docs/articles/v10-生存模式.md) · 日志：[docs/notes/v10-notes.md](docs/notes/v10-notes.md)

@@ -3,6 +3,7 @@ import type Core from '../../core'
 import type Terrain from '../../terrain'
 import { BLOCK_OF, BLOCKS, fullStateName } from '../../terrain/blocks'
 import { CHUNK_SIZE } from '../../terrain/chunk/Chunk'
+import { maxDamage, miningSpeed } from '../../items/tools'
 
 /**
  * F3 调试屏。左上角显示坐标、区块、朝向、帧率，以及最重要的一行：
@@ -25,6 +26,18 @@ export default class F3 {
   private lightLine(x: number, y: number, z: number): string {
     const l = this.terrain.lightAt(x, y, z)
     return l ? `Client Light: ${Math.max(l.sky, l.block)} (${l.sky} sky, ${l.block} block)` : 'Client Light: （区块还没点亮）'
+  }
+
+  /** v10.1：手上的工具对准星指着的方块有多快、还剩多少耐久 */
+  private toolLine(): string {
+    const h = this.control.held
+    const t = this.control.target
+    if (!h) return ''
+    const max = maxDamage(h.item)
+    const s = t ? this.terrain.getBlock(t.x, t.y, t.z) : null
+    const speed = s === null ? '' : `速度 ×${miningSpeed(h.item, s)}`
+    const dur = max ? `耐久 ${max - (h.damage ?? 0)}/${max}` : ''
+    return [speed, dur].filter(Boolean).length ? `, 手上: ${[speed, dur].filter(Boolean).join(' ')}` : ''
   }
 
   /** 时间：第几天、几点（dayTime 0 是早上 6 点） */
@@ -101,7 +114,7 @@ export default class F3 {
     const r = this.core.renderer.info.render
     const mb = (b: number) => (b / 1048576).toFixed(1) + ' MB'
     const lines = [
-      `mc-replica v10 (${fps} fps, 20 TPS)`,
+      `mc-replica v10.1 (${fps} fps, 20 TPS)`,
       `种子: ${info?.seed ?? '…'}    noise_settings: ${info?.settings ?? '…'}`,
       `区块: ${st.loaded} 已加载（${st.lit} 已点亮）, ${st.loading} 生成中, 上一个用时 ${this.terrain.lastChunkMs.toFixed(0)} ms, 光照+网格 ${this.terrain.lastLightMs.toFixed(0)} ms, 挖/放重建 ${this.terrain.lastRemeshMs.toFixed(1)} ms`,
       `方块数据: ${mb(st.bytes)}（v0 的存法要 ${mb(st.v0Bytes)}）`,
@@ -109,7 +122,7 @@ export default class F3 {
       `资源包: ${this.terrain.resourcePack ?? '没有（程序画的纹理，见 resourcepacks/README.md）'}`,
       this.saveLine(),
       // v10
-      `模式: ${this.control.mode === 'survival' ? '生存' : '创造'}, 地上的物品 ${this.control.drops.length} 个${this.control.mining ? `, 挖掘 ${Math.floor(this.control.mining.progress * 100)}%` : ''}`,
+      `模式: ${this.control.mode === 'survival' ? '生存' : '创造'}, 地上的物品 ${this.control.drops.length} 个${this.control.mining ? `, 挖掘 ${Math.floor(this.control.mining.progress * 100)}%` : ''}${this.toolLine()}`,
       `网格: ${this.terrain.greedy ? '贪婪' : '逐面'} [G]${this.terrain.materials.wireframe ? ' 线框' : ''} [K]  ${st.sectionMeshes} 个 section 网格, ${st.quads.toLocaleString()} 个四边形, ${mb(st.meshBytes)}`,
       `本帧: ${r.calls} 次绘制, ${r.triangles.toLocaleString()} 个三角形`,
       `流体: ${st.fluidQueue} 个待更新, 上个 tick 处理 ${this.terrain.fluids.lastProcessed} 个`,

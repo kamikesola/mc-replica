@@ -4,6 +4,8 @@ import type Terrain from '../terrain'
 import type Sky from '../sky'
 import { itemIcon } from './icons'
 import { itemName, type ItemStack } from '../items/items'
+import { CraftingGrid } from '../items/crafting'
+import { maxDamage } from '../items/tools'
 import type { WorldInfo } from '../terrain/worker/protocol'
 import { $, isMobile } from '../utils'
 import F3 from './debug/f3'
@@ -144,6 +146,15 @@ export default class UI {
       const count = el.querySelector('b')!
       el.title = st ? itemName(st.item) : ''
       count.textContent = st && st.count > 1 ? String(st.count) : ''
+      // v10.1：耐久条（原版 ItemStack.getBarWidth / getBarColor：13 像素宽，颜色从绿到红）
+      const max = st ? maxDamage(st.item) : 0
+      let bar = el.querySelector('i')
+      if (st && max && st.damage) {
+        if (!bar) bar = el.appendChild(document.createElement('i'))
+        const f = Math.max(0, (max - st.damage) / max)
+        bar.style.width = `${Math.round(13 - (st.damage * 13) / max) * 2}px`
+        bar.style.background = `hsl(${Math.round(f * 120)}, 100%, 50%)`
+      } else bar?.remove()
       if (!st) {
         img.removeAttribute('src')
         img.dataset.item = ''
@@ -157,10 +168,14 @@ export default class UI {
     }
   }
 
-  // ---------------------------------------------------------------- 背包界面（v10，E 键）
+  // ---------------------------------------------------------------- 背包界面（v10，E 键）；v10.1 起带合成格子
 
   inventoryOpen = false
   private invEl = $('inventory')
+  /** 背包里的 2×2 合成格子，和右键工作台打开的 3×3（v10.1） */
+  private craft2 = new CraftingGrid(2)
+  private craft3 = new CraftingGrid(3)
+  private craft = this.craft2
 
   initInventory = () => {
     const grid = (n: number, from: number) => Array.from({ length: n }, (_, i) => `<div class="slot" data-i="${from + i}"><img alt=""><b></b></div>`).join('')
@@ -169,7 +184,34 @@ export default class UI {
     this.invEl.addEventListener('mousedown', (e) => {
       const el = (e.target as HTMLElement).closest('.slot') as HTMLElement | null
       if (!el) return
-      this.control.cursor = this.control.inventory.click(Number(el.dataset.i), this.control.cursor, e.button === 2)
+      const c = this.control
+      const inv = c.inventory
+      const right = e.button === 2
+      const drop = (stacks: ItemStack[]) => stacks.forEach((st) => c.throwStack(st))
+      if (el.dataset.r !== undefined) {
+        // 结果格：Shift 一直做到做不了，否则拿一份到手上
+        if (e.shiftKey) drop(this.craft.quickCraft(inv)[1])
+        else {
+          const [cursor, dropped] = this.craft.clickResult(c.cursor, inv)
+          c.cursor = cursor
+          drop(dropped)
+        }
+      } else if (el.dataset.c !== undefined) {
+        const i = Number(el.dataset.c)
+        if (e.shiftKey) {
+          // 合成格子里的 Shift + 点：挪回背包（原版先放背包三排，再放物品栏）
+          const st = this.craft.slots[i]
+          if (st) {
+            this.craft.slots[i] = null
+            const left = inv.addStack(st, 0, 36)
+            if (left) this.craft.slots[i] = { ...st, count: left }
+          }
+        } else c.cursor = this.craft.click(i, c.cursor, right)
+      } else {
+        const i = Number(el.dataset.i)
+        if (e.shiftKey) inv.quickMove(i)
+        else c.cursor = inv.click(i, c.cursor, right)
+      }
       this.renderInventory()
     })
     this.invEl.addEventListener('mousemove', (e) => {
@@ -181,28 +223,35 @@ export default class UI {
       if (e.code === 'KeyE' && this.control.control.isLocked && !e.repeat) this.openInventory()
       else if ((e.code === 'KeyE' || e.code === 'Escape') && this.inventoryOpen) this.closeInventory(e.code === 'KeyE')
     })
+    // v10.1：右键工作台
+    this.control.onOpenScreen = () => this.openInventory(3)
   }
 
-  openInventory() {
+  /** 打开背包（2×2 合成）或工作台（3×3 合成） */
+  openInventory(width: 2 | 3 = 2) {
     this.inventoryOpen = true
+    this.craft = width === 3 ? this.craft3 : this.craft2
+    $('invTitle').textContent = width === 3 ? '工作台' : '背包'
+    const g = $('craftGrid')
+    g.style.gridTemplateColumns = `repeat(${width}, 44px)`
+    g.innerHTML = Array.from({ length: width * width }, (_, i) => `<div class="slot" data-c="${i}"><img alt=""><b></b></div>`).join('')
     this.invEl.classList.remove('hidden')
     this.renderInventory()
     this.control.control.unlock()
   }
 
-  /** 关掉背包；手上拿着的东西放回背包（放不下就扔掉） */
+  /** 关掉背包；手上拿着的、合成格子里的东西放回背包（放不下就扔掉） */
   closeInventory(relock: boolean) {
     this.inventoryOpen = false
     this.invEl.classList.add('hidden')
-    const c = this.control.cursor
-    if (c) {
-      const left = this.control.inventory.add(c.item, c.count)
-      this.control.cursor = null
-      if (left) {
-        this.control.inventory.slots[this.control.slot] ??= { item: c.item, count: left }
-      }
+    const c = this.control
+    if (c.cursor) {
+      const left = c.inventory.addStack(c.cursor)
+      if (left) c.throwStack({ ...c.cursor, count: left })
+      c.cursor = null
     }
-    if (relock) this.control.control.lock()
+    for (const st of this.craft.clear(c.inventory)) c.throwStack(st)
+    if (relock) c.control.lock()
     else this.menu.classList.remove('hidden')
   }
 
@@ -210,6 +259,8 @@ export default class UI {
     const inv = this.control.inventory.slots
     this.fillSlots(document.querySelectorAll('#invMain .slot'), inv.slice(9))
     this.fillSlots(document.querySelectorAll('#invBar .slot'), inv.slice(0, 9))
+    this.fillSlots(document.querySelectorAll('#craftGrid .slot'), this.craft.slots)
+    this.fillSlots([$('craftResult')], [this.craft.result()])
     this.fillSlots([$('invCursor')], [this.control.cursor])
   }
 
@@ -227,7 +278,7 @@ export default class UI {
 
     // v10：物品栏（背包的前 9 格）有变化时重画
     const inv = this.control.inventory.slots
-    const key = inv.map((st) => (st ? `${st.item}*${st.count}` : '')).join() + `|${this.control.cursor?.item}*${this.control.cursor?.count}|${this.control.slot}`
+    const key = inv.map((st) => (st ? `${st.item}*${st.count}*${st.damage ?? 0}` : '')).join() + `|${this.control.cursor?.item}*${this.control.cursor?.count}|${this.control.slot}`
     if (key !== this.lastHotbar) {
       this.lastHotbar = key
       this.fillSlots(this.hotbar.querySelectorAll('.slot'), inv.slice(0, 9))

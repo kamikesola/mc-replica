@@ -1,5 +1,6 @@
 import { BLOCK_OF, NAME_BY_BLOCK, propOf } from '../terrain/blocks'
 import type { ItemStack } from './items'
+import { inItemTag } from './recipes'
 
 /**
  * 战利品表（v10，原版 LootTable）：方块被挖掉时掉什么。原版每种方块一个 JSON（data/minecraft/loot_table/blocks/），比如：
@@ -10,8 +11,8 @@ import type { ItemStack } from './items'
  *   橡树树叶  → 用剪刀或精准采集掉树叶，否则 1/20 掉树苗、1/50 掉木棍、1/200 掉苹果
  *
  * 一个表有几个“池”（pool），每个池抽 rolls 次，每次从满足条件的条目里按权重抽一个，再按函数改数量。
- * 这里实现了方块表里常用的那些条件、条目、函数。我们还没有工具和附魔，所以 match_tool（剪刀、精准采集……）一律不满足，
- * 时运等级当成 0 —— 也就是原版空手挖的结果。
+ * 这里实现了方块表里常用的那些条件、条目、函数。v10.1 起有了工具：match_tool 会看手上拿的是什么（剪刀剪树叶掉树叶、
+ * 剪草掉草）；还没有附魔，所以要精准采集的条件一律不满足，时运等级当成 0。
  */
 
 type Json = Record<string, unknown>
@@ -28,8 +29,12 @@ export class LootTables {
     return this.tables.size
   }
 
-  /** 方块状态 s 被挖掉时掉的东西；没有表返回 null（调用的一方决定怎么办） */
-  blockDrops(s: number): ItemStack[] | null {
+  /** 挖的时候手上拿的物品（v10.1，match_tool 用） */
+  private tool: string | undefined
+
+  /** 方块状态 s 被挖掉时掉的东西；没有表返回 null（调用的一方决定怎么办）。tool：手上拿的物品 */
+  blockDrops(s: number, tool?: string): ItemStack[] | null {
+    this.tool = tool
     const name = NAME_BY_BLOCK[BLOCK_OF[s]]
     const t = this.tables.get(name.replace('minecraft:', 'minecraft:blocks/'))
     if (!t) return null
@@ -147,7 +152,17 @@ export class LootTables {
       case 'entity_properties':
         // 挖方块的那个实体（玩家）存在；带具体条件的（着火了吗、穿什么……）不支持
         return c.entity === 'this' && Object.keys((c.predicate as Json) ?? {}).length === 0
-      // match_tool（剪刀、精准采集、斧头……）：我们还没有工具
+      case 'match_tool': {
+        // v10.1：{"items": "minecraft:shears"} / {"items": "#minecraft:cluster_max_harvestables"}；
+        // 附魔条件（{"predicates": {"minecraft:enchantments": ...}}，精准采集）还没有附魔，不满足
+        const p = (c.predicate as Json) ?? {}
+        if (p.predicates) return false
+        if (p.items === undefined) return true
+        const tool = this.tool
+        if (!tool) return false
+        const list = Array.isArray(p.items) ? (p.items as string[]) : [String(p.items)]
+        return list.some((i) => (i.startsWith('#') ? inItemTag(i.slice(1), tool) : i === tool))
+      }
       // entity_properties、location_check……：方块表里很少用到，当作不满足
       default:
         return false

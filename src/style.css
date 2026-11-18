@@ -356,6 +356,33 @@ canvas {
   background: none !important;
   border: none !important;
 }
+/* v10.1：合成格子、耐久条 */
+#inventory .craft {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 0 0 12px 60px;
+}
+#inventory .craft .arrow {
+  font-size: 26px;
+  color: #8b8b8b;
+}
+#inventory .slot.result {
+  width: 56px;
+  height: 56px;
+}
+#inventory .slot.result img {
+  inset: 10px;
+}
+#hotbar .slot i,
+#inventory .slot i {
+  position: absolute;
+  left: 7px;
+  bottom: 4px;
+  height: 2px;
+  box-shadow: 0 2px 0 #000;
+  pointer-events: none;
+}
 #inventory .hint {
   margin: 8px 0 0;
   font-size: 12px;

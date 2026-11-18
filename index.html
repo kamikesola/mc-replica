@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>mc-replica v10</title>
+    <title>mc-replica v10.1</title>
   </head>
   <body>
     <!-- 游戏画面（canvas）由 Core 插入到 body 里；下面是 UI，由 src/ui 控制 -->
@@ -11,7 +11,7 @@
     <!-- 菜单：没锁定鼠标时显示 -->
     <div id="menu">
       <div class="panel">
-        <h1>mc-replica <span class="ver">v10</span></h1>
+        <h1>mc-replica <span class="ver">v10.1</span></h1>
         <p class="sub">用 TypeScript 复刻 Minecraft Java 版 1.21.4 · 地形来自原版密度函数</p>
         <p id="worldInfo" class="info"></p>
 
@@ -67,10 +67,16 @@
     <!-- v10：背包（E） -->
     <div id="inventory" class="hidden">
       <div class="panel">
-        <h3>背包</h3>
+        <h3 id="invTitle">背包</h3>
+        <!-- v10.1：合成格子（背包 2×2，工作台 3×3）和结果格 -->
+        <div class="craft">
+          <div id="craftGrid" class="grid"></div>
+          <span class="arrow">➜</span>
+          <div id="craftResult" class="slot result" data-r=""><img alt="" /><b></b></div>
+        </div>
         <div id="invMain" class="grid"></div>
         <div id="invBar" class="grid bar"></div>
-        <p class="hint">左键拿起 / 放下 / 交换，右键拿一半 / 放一个 · E 关闭</p>
+        <p class="hint">左键拿起 / 放下 / 交换，右键拿一半 / 放一个，Shift + 左键快速移动（点结果格一次做完）· E 关闭</p>
       </div>
       <div id="invCursor" class="slot"><img alt="" /><b></b></div>
     </div>

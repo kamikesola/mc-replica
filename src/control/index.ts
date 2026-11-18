@@ -7,6 +7,7 @@ import { BLOCK_OF, BLOCKS, BlockType, COLLISION, COLLISION_SHAPES, FLUIDS, Fluid
 import { ItemEntity, popResource, throwItem } from '../items/entities'
 import { Inventory } from '../items/inventory'
 import { destroyProgress } from '../items/mining'
+import { canBreakInCreative, damageTool, isCorrectTool, miningSpeed } from '../items/tools'
 import { blockOfItem, itemOfBlock, type ItemStack } from '../items/items'
 import { hasLootTables, loadLootTable, lootTables } from '../items/lootLoader'
 import { dirOf, placement, useBlock, type PlaceWorld } from '../terrain/placement'
@@ -66,6 +67,10 @@ export default class Control {
   drops: ItemEntity[] = []
   /** 正在挖的方块（v10，生存模式）：位置、挖了多少（0..1） */
   mining: { x: number; y: number; z: number; state: number; progress: number } | null = null
+  /**
+   * 打开界面（v10.1）：右键工作台时调用，UI 那边打开 3×3 的合成界面
+   */
+  onOpenScreen: ((kind: 'crafting_table') => void) | null = null
   /** 挖掉一块后要等几个 tick 才能挖下一块（原版 destroyDelay = 5） */
   private destroyDelay = 0
   private leftDown = false
@@ -192,7 +197,8 @@ export default class Control {
       if (e.button === 0) this.leftDown = true
       if (!this.control.isLocked || !this.target) return
       // 创造模式点一下就挖掉；生存模式按住左键慢慢挖（在 tick 里）
-      if (e.button === 0 && this.mode === 'creative') this.breakBlock()
+      // v10.1：创造模式拿着剑挖不动（原版 SwordItem.canAttackBlock）
+      if (e.button === 0 && this.mode === 'creative' && canBreakInCreative(this.held?.item)) this.breakBlock()
       if (e.button === 2) this.placeBlock()
       if (e.button === 1) this.pickBlock()
     })
@@ -243,20 +249,30 @@ export default class Control {
     if (type === null || !BLOCKS[BLOCK_OF[type]].breakable) return
     // 含水的方块挖掉以后留下水（原版：方块没了，流体状态还在）
     this.setAndUpdate(t.x, t.y, t.z, FLUIDS[type].kind === FluidKind.water && FLUIDS[type].source && BLOCK_OF[type] !== BlockType.water ? BlockType.water : BlockType.air)
-    if (this.mode === 'survival') this.dropLoot(t.x, t.y, t.z, type)
+    if (this.mode !== 'survival') return
+    // v10.1：要用工具的方块，手上不是对的工具就不掉东西（原版 Player.hasCorrectToolForDrops）
+    const held = this.held
+    if (!NEEDS_TOOL[type] || isCorrectTool(held?.item, type)) this.dropLoot(t.x, t.y, t.z, type, held?.item)
+    // 工具掉耐久，用完就坏了（原版 ItemStack.mineBlock → hurtAndBreak）
+    if (held && !damageTool(held, HARDNESS[type])) this.inventory.slots[this.slot] = null
+  }
+
+  /** 把一组东西从眼前扔出去（v10.1：合成剩下的、关界面时放不下的） */
+  throwStack(st: ItemStack) {
+    const p = this.player.pos
+    this.drops.push(throwItem({ x: p.x, y: p.y + this.eye, z: p.z }, this.yaw, this.head.rotation.x, st))
   }
 
   /**
-   * 生存模式挖掉方块后掉东西（v10）：按原版的战利品表（items/loot.ts）；要用对的工具的方块空手挖什么都不掉。
+   * 生存模式挖掉方块后掉东西（v10）：按原版的战利品表（items/loot.ts）；v10.1 起表里的 match_tool 看 tool（手上的物品）。
    * 没有战利品表（没放数据包）时掉方块自己
    */
-  private async dropLoot(x: number, y: number, z: number, s: number) {
-    if (NEEDS_TOOL[s]) return
+  private async dropLoot(x: number, y: number, z: number, s: number, tool?: string) {
     const name = NAME_BY_BLOCK[BLOCK_OF[s]].replace('minecraft:', 'minecraft:blocks/')
     let stacks: ItemStack[] | null = null
     if (hasLootTables()) {
       await loadLootTable(name)
-      stacks = lootTables.blockDrops(s)
+      stacks = lootTables.blockDrops(s, tool)
     }
     if (stacks === null) {
       const item = itemOfBlock(s)
@@ -280,7 +296,10 @@ export default class Control {
     if (s === null) return
     const m = this.mining
     if (!m || m.x !== t.x || m.y !== t.y || m.z !== t.z || m.state !== s) this.mining = { x: t.x, y: t.y, z: t.z, state: s, progress: 0 }
-    this.mining!.progress += destroyProgress(HARDNESS[s], NEEDS_TOOL[s] === 1, this.player.onGround, this.player.underWater)
+    // v10.1：手上的工具决定挖得多快、能不能掉东西（items/tools.ts）
+    const tool = this.held?.item
+    const noDrops = NEEDS_TOOL[s] === 1 && !isCorrectTool(tool, s)
+    this.mining!.progress += destroyProgress(HARDNESS[s], noDrops, this.player.onGround, this.player.underWater, miningSpeed(tool, s))
     if (this.mining!.progress >= 1) {
       this.breakBlock()
       this.mining = null
@@ -302,7 +321,7 @@ export default class Control {
       d.tick(this.world.shape, inWater)
       const b = d.box
       if (d.pickupDelay === 0 && b.maxX > reach.minX && b.minX < reach.maxX && b.maxY > reach.minY && b.minY < reach.maxY && b.maxZ > reach.minZ && b.minZ < reach.maxZ) {
-        const left = this.inventory.add(d.stack.item, d.stack.count)
+        const left = this.inventory.addStack(d.stack)
         if (left === 0) d.removed = true
         else d.stack.count = left
       }
@@ -314,7 +333,7 @@ export default class Control {
   dropHeld(all = false) {
     const st = this.inventory.take(this.slot, all ? 64 : 1)
     if (!st) return
-    if (this.mode === 'creative' && !all) this.inventory.add(st.item, st.count) // 创造模式手上的不会少
+    if (this.mode === 'creative' && !all) this.inventory.addStack(st) // 创造模式手上的不会少
     const p = this.player.pos
     this.drops.push(throwItem({ x: p.x, y: p.y + this.eye, z: p.z }, this.yaw, this.head.rotation.x, st))
   }
@@ -325,6 +344,11 @@ export default class Control {
     if (!this.keys.has('ShiftLeft') && !this.keys.has('ShiftRight')) {
       const s = this.terrain.getBlock(t.x, t.y, t.z)
       // v9.1：拉杆、按钮、中继器
+      // v10.1：工作台打开 3×3 合成界面
+      if (s !== null && NAME_BY_BLOCK[BLOCK_OF[s]] === 'minecraft:crafting_table' && this.onOpenScreen) {
+        this.onOpenScreen('crafting_table')
+        return
+      }
       const used = s === null ? null : (useRedstone(s) ?? useBlock(s, this.yaw))
       if (used !== null) {
         this.setAndUpdate(t.x, t.y, t.z, used)

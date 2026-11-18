@@ -13,6 +13,8 @@ import ITEM_LIST from './itemList.json'
 export interface ItemStack {
   item: string
   count: number
+  /** 用掉了多少耐久（v10.1，只有工具这类有耐久的物品才有；0 或没有 = 全新） */
+  damage?: number
 }
 
 /** 原版全部物品 → 最大堆叠数（tools/vanilla/gen-items.py，来自数据报告） */

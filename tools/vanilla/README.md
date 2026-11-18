@@ -76,6 +76,9 @@ python3 tools/vanilla/gen-blocks.py <generated/reports/blocks.json> <server-1.21
                                                               #     方块名 → src/terrain/blockList.json，属性和取值 → stateDefs.json，
                                                               #     光照 → light/lightProps.json，碰撞箱和破坏时间 → blockShapes.json，
                                                               #     完整的光照状态表 → tools/vanilla/out/light-states.tsv（不进 git）
+python3 tools/vanilla/gen-items.py <generated/reports/items.json> <1.21.4 的 jar>
+                                                              # v10 / v10.1：物品表 → src/items/itemList.json，工具规则和耐久 → tools.json，
+                                                              #     工作台配方（964 个，物品标签展开）→ recipes.json
 npx tsx tools/vanilla/diff-light.ts <bare 存档> --range -3 -3 2 2 --bare
                                                               # v6：天空光、方块光逐格比较（bare 存档要加 --bare）
 npx tsx tools/vanilla/diff-light.ts <full 存档> --vanilla-blocks --areas tools/vanilla/areas51.txt tools/vanilla/areas.txt

@@ -104,6 +104,11 @@ Chunk（16×16×384）
 `entities.ts`（地上的物品的物理）、`render.ts`（画地上的物品、裂纹）、`mining.ts`（挖掘进度）。
 `Control` 持有背包、游戏模式、地上的物品，每个 tick 推进挖掘和物品；UI 的物品栏 / 背包界面读 `control.inventory`。
 
+v10.1：`recipes.ts`（`RecipeBook`：964 个工作台配方，`find(格子, 宽)` 先裁掉空行空列再逐个比）、`crafting.ts`（`CraftingGrid`：
+合成格子、结果格的点击、Shift 连续合成、剩余物）、`tools.ts`（`miningSpeed` / `isCorrectTool` / `damageTool`，原版 tool 组件的规则）。
+数据都由 `tools/vanilla/gen-items.py` 从数据报告和 jar 生成（`recipes.json`、`tools.json`，进 git）。合成格子归 UI 管（关界面时清空），
+右键工作台由 `Control.onOpenScreen` 通知 UI 打开 3×3。`ItemStack.damage` 是用掉的耐久，背包的叠放比较 `sameItem`（物品和耐久都一样）。
+
 ## 红石（v9.1）
 
 `terrain/redstone.ts`：`Redstone` 有一个待处理队列（neighborChanged）和计划刻表。`Terrain.updateBlock` 写入后调用 `changed` + `process`，

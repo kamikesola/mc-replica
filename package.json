@@ -2,7 +2,7 @@
   "name": "mc-replica",
   "version": "0.0.0",
   "private": true,
-  "description": "用 TypeScript + three.js 逐版复刻 Minecraft Java 版 1.21.1 —— v2：20 TPS 原版物理",
+  "description": "用 TypeScript + three.js 逐版复刻 Minecraft Java 版 1.21.4，每个版本一个 demo",
   "license": "MIT",
   "type": "module",
   "scripts": {

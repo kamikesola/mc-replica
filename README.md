@@ -6,25 +6,27 @@
 
 ![](docs/articles/images/v6/01-sunrise.jpg)
 
-| 版本 | 文章 |
-| --- | --- |
-| v5 | [地物：矿石与树](docs/articles/v5-地物：矿石与树.md) |
-| v5.1 | [其余地物与洞穴](docs/articles/v5.1-其余地物与洞穴.md) |
-| v5.2 | [下界、末地与收尾](docs/articles/v5.2-下界、末地与收尾.md) |
-| v6 | [光照与昼夜](docs/articles/v6-光照与昼夜.md) |
-| v7 | [方块状态](docs/articles/v7-方块状态.md) |
-| v7.1 | [方块模型](docs/articles/v7.1-方块模型.md) |
-| v8 | [存档](docs/articles/v8-存档.md) |
-| v8.1 | [原版全部方块](docs/articles/v8.1-原版全部方块.md) |
-| v9 | [放方块](docs/articles/v9-放方块.md) |
-| v9.1 | [红石](docs/articles/v9.1-红石.md) |
-| v10 | [生存模式：挖掘、掉落、背包](docs/articles/v10-生存模式.md) |
-| v10.1 | [合成和工具](docs/articles/v10.1-合成和工具.md) |
-| v4 | [生物群系与地表规则](docs/articles/v4-生物群系与地表规则.md) |
-| v3 | [含水层与流体](docs/articles/v3-含水层与流体.md) |
-| v2 | [20 TPS 原版物理与手感](docs/articles/v2-原版物理与手感.md) |
-| v1 | [区块存储、贪婪网格与纹理](docs/articles/v1-区块存储与贪婪网格.md) |
-| v0 | [功能与实现：噪声层、AABB、方块高亮](docs/articles/v0-功能与实现.md) |
+在线 demo 和版本列表：**https://kamikesola.github.io/mc-replica/**（公开版不含原版数据，地形是简化版，见下面“加载原版数据”）
+
+| 版本 | 文章 | 在线 demo |
+| --- | --- | --- |
+| v10.1 | [合成和工具](docs/articles/v10.1-合成和工具.md) | [v10.1](https://kamikesola.github.io/mc-replica/v10.1/) |
+| v10 | [生存模式：挖掘、掉落、背包](docs/articles/v10-生存模式.md) | [v10](https://kamikesola.github.io/mc-replica/v10/) |
+| v9.1 | [红石](docs/articles/v9.1-红石.md) | [v9.1](https://kamikesola.github.io/mc-replica/v9.1/) |
+| v9 | [放方块](docs/articles/v9-放方块.md) | [v9](https://kamikesola.github.io/mc-replica/v9/) |
+| v8.1 | [原版全部方块](docs/articles/v8.1-原版全部方块.md) | [v8.1](https://kamikesola.github.io/mc-replica/v8.1/) |
+| v8 | [存档](docs/articles/v8-存档.md) | [v8](https://kamikesola.github.io/mc-replica/v8/) |
+| v7.1 | [方块模型](docs/articles/v7.1-方块模型.md) | [v7.1](https://kamikesola.github.io/mc-replica/v7.1/) |
+| v7 | [方块状态](docs/articles/v7-方块状态.md) | [v7](https://kamikesola.github.io/mc-replica/v7/) |
+| v6 | [光照与昼夜](docs/articles/v6-光照与昼夜.md) | [v6](https://kamikesola.github.io/mc-replica/v6/) |
+| v5.2 | [下界、末地与收尾](docs/articles/v5.2-下界、末地与收尾.md) | [v5.2](https://kamikesola.github.io/mc-replica/v5.2/) |
+| v5.1 | [其余地物与洞穴](docs/articles/v5.1-其余地物与洞穴.md) | [v5.1](https://kamikesola.github.io/mc-replica/v5.1/) |
+| v5 | [地物：矿石与树](docs/articles/v5-地物：矿石与树.md) | [v5](https://kamikesola.github.io/mc-replica/v5/) |
+| v4 | [生物群系与地表规则](docs/articles/v4-生物群系与地表规则.md) | [v4](https://kamikesola.github.io/mc-replica/v4/) |
+| v3 | [含水层与流体](docs/articles/v3-含水层与流体.md) | [v3](https://kamikesola.github.io/mc-replica/v3/) |
+| v2 | [20 TPS 原版物理与手感](docs/articles/v2-原版物理与手感.md) | [v2.0](https://kamikesola.github.io/mc-replica/v2.0/) |
+| v1 | [区块存储、贪婪网格与纹理](docs/articles/v1-区块存储与贪婪网格.md) | [v1](https://kamikesola.github.io/mc-replica/v1/) |
+| v0 | [功能与实现：噪声层、AABB、方块高亮](docs/articles/v0-功能与实现.md) | [v0](https://kamikesola.github.io/mc-replica/v0/) |
 
 每版的改动见 [CHANGELOG.md](CHANGELOG.md)。
 

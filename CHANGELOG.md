@@ -2,6 +2,15 @@
 
 每个版本对应一个 git tag 和一篇文章。数字来自 `tools/` 下的脚本或 `tests/` 里的测试，可以自己复现。
 
+## 未发布 · 整理
+
+不加新功能，只整理仓库和发布流程。
+
+- `main` 快进到 v10.1：之前每一版都在新的功能分支上接着做，`main` 一直停在 v0
+- Pages 首页（`site/index.html`）：版本列表，每版有试玩、文章、代码三个链接；`pages-home.yml` 在 `main` 的 `site/` 变化时发布到根目录，不影响 `/vN/`
+- 公开版 demo 的菜单里说明：地形是简化版、纹理是程序画的，原版效果要本地放数据运行
+- README 的版本表按新到旧排，加上在线 demo 链接；`package.json` 的描述和 `vite.config.ts` 的注释更新为当前状态
+
 ## v10.1 · 合成和工具
 
 文章：[docs/articles/v10.1-合成和工具.md](docs/articles/v10.1-合成和工具.md) · 日志：[docs/notes/v10.1-notes.md](docs/notes/v10.1-notes.md)

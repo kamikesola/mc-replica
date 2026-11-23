@@ -1,0 +1,23 @@
+name: deploy-home
+
+# 首页（/mc-replica/）：main 上的 site/ 有变化时发布到 gh-pages 根目录。
+# 各版本的 demo 由 deploy.yml 在推 tag 时发布到 /vN/，两边互不覆盖（keep_files）。
+on:
+  push:
+    branches: [main]
+    paths: ['site/**', '.github/workflows/pages-home.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          keep_files: true   # 不删掉 /v0/、/v1/……这些已发布的版本

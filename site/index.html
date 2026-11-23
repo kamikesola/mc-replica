@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>mc-replica · 用 TypeScript 逐版复刻 Minecraft</title>
+    <!--
+      GitHub Pages 首页（/mc-replica/）。各版本的 demo 由 deploy.yml 在推 tag 时发布到 /vN/，
+      这个页面由 pages-home.yml 在 main 上的 site/ 变化时发布到根目录。
+      新发布一个版本：在下面 VERSIONS 的最前面加一行。
+    -->
+    <style>
+      :root {
+        --bg: #16181b;
+        --panel: #1f2226;
+        --line: #2e3238;
+        --text: #e4e7ea;
+        --muted: #9aa1a9;
+        --accent: #7fbf5a;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 15px/1.65 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      }
+      main { max-width: 880px; margin: 0 auto; padding: 48px 20px 64px; }
+      h1 { font-size: 28px; margin: 0 0 6px; letter-spacing: 0.5px; }
+      h1 span { color: var(--accent); }
+      .lead { color: var(--muted); margin: 0 0 24px; }
+      .note {
+        background: var(--panel);
+        border-left: 3px solid var(--accent);
+        padding: 12px 16px;
+        border-radius: 4px;
+        color: var(--muted);
+        font-size: 14px;
+        margin-bottom: 32px;
+      }
+      .note b { color: var(--text); font-weight: 600; }
+      a { color: var(--accent); text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      h2 { font-size: 16px; color: var(--muted); font-weight: 600; margin: 36px 0 10px; }
+      ol { list-style: none; padding: 0; margin: 0; border-top: 1px solid var(--line); }
+      li {
+        display: grid;
+        grid-template-columns: 96px 1fr auto;
+        gap: 4px 16px;
+        align-items: baseline;
+        padding: 12px 4px;
+        border-bottom: 1px solid var(--line);
+      }
+      .ver { white-space: nowrap; font-family: ui-monospace, Consolas, monospace; color: var(--accent); font-weight: 600; }
+      .title { font-weight: 600; }
+      .desc { grid-column: 2 / 3; color: var(--muted); font-size: 14px; }
+      .links { grid-row: 1 / 3; grid-column: 3; display: flex; gap: 14px; white-space: nowrap; font-size: 14px; }
+      li.latest .ver::after { content: " 最新"; font-size: 11px; color: var(--muted); font-weight: 400; }
+      footer { margin-top: 40px; color: var(--muted); font-size: 13px; }
+      @media (max-width: 560px) {
+        li { grid-template-columns: 52px 1fr; }
+        .links { grid-row: auto; grid-column: 2; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>mc-replica <span>·</span> 逐版复刻 Minecraft Java 1.21.4</h1>
+      <p class="lead">
+        TypeScript + three.js。每个版本移植原版的一个系统，配一个能玩的 demo 和一篇技术文章；世界生成、光照、方块状态都拿原版服务端生成的存档逐格核对。
+      </p>
+
+      <div class="note">
+        <b>在线 demo 是公开版：</b>地形用的是仓库自带的简化 demo 地形，纹理是程序画的，不包含任何 Mojang 的数据和素材。想看到和原版逐格一致的地形与原版外观，请克隆<a id="repoLink" href="https://github.com/kamikesola/mc-replica">仓库</a>，按 README 放入你自己 1.21.4 客户端里的数据后本地运行。
+      </div>
+
+      <h2>版本</h2>
+      <ol id="versions"></ol>
+
+      <footer>
+        初版架构参考 <a href="https://github.com/vyse12138/minecraft-threejs">vyse12138/minecraft-threejs</a>（MIT）。
+        Minecraft 是 Mojang Studios 的商标，本项目与 Mojang、Microsoft 无关。
+      </footer>
+    </main>
+
+    <script>
+      const REPO = 'https://github.com/kamikesola/mc-replica'
+
+      // [demo 目录（= tag 名）, 标题, 一句话说明, 文章文件名（docs/articles/ 下）]
+      const VERSIONS = [
+        ['v10.1', '合成和工具', '背包 2×2、工作台 3×3，原版 964 个配方；镐斧锹的挖掘速度、对的工具才掉东西、耐久', 'v10.1-合成和工具.md'],
+        ['v10', '生存模式', '挖掘要时间、按原版战利品表掉落、捡起物品、36 格背包', 'v10-生存模式.md'],
+        ['v9.1', '红石', '红石线、拉杆、按钮、火把、中继器、红石灯、活塞', 'v9.1-红石.md'],
+        ['v9', '放方块', '楼梯拐角、台阶叠放、栅栏和墙自动连接、门和床', 'v9-放方块.md'],
+        ['v8.1', '原版全部方块', '1095 种方块、27816 个状态，碰撞箱按原版', 'v8.1-原版全部方块.md'],
+        ['v8', '存档', 'IndexedDB 自动保存，导入原版存档（level.dat + .mca）', 'v8-存档.md'],
+        ['v7.1', '方块模型', '读原版 blockstates / 模型 / 纹理（需要本地资源包）', 'v7.1-方块模型.md'],
+        ['v7', '方块状态', '方块属性和编号与原版一致，区块改为 16 位存储', 'v7-方块状态.md'],
+        ['v6', '光照与昼夜', '天空光、方块光逐格对照原版，平滑光照、日月星辰', 'v6-光照与昼夜.md'],
+        ['v5.2', '下界、末地与收尾', '下界和末地的地形与地物，化石、气泡柱', 'v5.2-下界、末地与收尾.md'],
+        ['v5.1', '其余地物与洞穴', '洞穴和峡谷雕刻器，花草、晶洞、滴水石、幽匿、珊瑚', 'v5.1-其余地物与洞穴.md'],
+        ['v5', '地物：矿石与树', '矿脉、16 种矿石、36 种树、积雪和冰', 'v5-地物：矿石与树.md'],
+        ['v4', '生物群系与地表规则', '原版气候参数表、surface_rule、按群系染色', 'v4-生物群系与地表规则.md'],
+        ['v3', '含水层与流体', '地下湖、岩浆湖，水和岩浆按原版规则流动', 'v3-含水层与流体.md'],
+        ['v2.0', '原版物理与手感', '20 TPS 固定步长，走跑跳与原版逐项一致', 'v2-原版物理与手感.md'],
+        ['v1.1', '水中移动修正', '浮出水面、上岸的手感', 'v1-区块存储与贪婪网格.md'],
+        ['v1', '区块存储与贪婪网格', 'section + 调色板、贪婪网格、程序纹理', 'v1-区块存储与贪婪网格.md'],
+        ['v0', '噪声、AABB 与方块高亮', '随机数、噪声、JSON 密度函数，能走能挖', 'v0-功能与实现.md'],
+      ]
+
+      const list = document.getElementById('versions')
+      VERSIONS.forEach(([dir, title, desc, article], i) => {
+        const li = document.createElement('li')
+        if (i === 0) li.className = 'latest'
+        const articleUrl = `${REPO}/blob/main/docs/articles/${encodeURIComponent(article)}`
+        li.innerHTML =
+          `<span class="ver"></span><span class="title"></span>` +
+          `<span class="links"><a href="./${dir}/">试玩</a><a href="${articleUrl}">文章</a><a href="${REPO}/tree/${dir}">代码</a></span>` +
+          `<span class="desc"></span>`
+        li.querySelector('.ver').textContent = dir
+        li.querySelector('.title').textContent = title
+        li.querySelector('.desc').textContent = desc
+        list.appendChild(li)
+      })
+    </script>
+  </body>
+</html>

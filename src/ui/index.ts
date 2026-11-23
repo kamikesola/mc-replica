@@ -119,9 +119,11 @@ export default class UI {
       .map((id) => `<option${id === info.settings ? ' selected' : ''}>${id}</option>`)
       .join('')
     const vanilla = info.packs.some((p) => p.name !== 'builtin')
-    $('worldInfo').textContent =
-      `种子 ${info.seed} · ${info.settings}` +
-      (vanilla ? '' : ' · 没有检测到原版数据包，正在使用 demo 简化地形（见 datapacks/README.md）')
+    // 公开部署的 demo（npm run build:public）不带原版数据和资源包：说清楚看到的是什么、怎么看到原版效果
+    const missing = import.meta.env.MODE === 'public'
+      ? ' · 这是公开版 demo：地形是自己写的简化版，纹理是程序画的。原版地形和外观需要克隆仓库、放入你自己的 1.21.4 数据后本地运行（见 README）'
+      : ' · 没有检测到原版数据包，正在使用 demo 简化地形（见 datapacks/README.md）'
+    $('worldInfo').textContent = `种子 ${info.seed} · ${info.settings}` + (vanilla ? '' : missing)
     this.noiseMap.setFields(info.routerFields)
     this.setDistance(this.terrain.distance)
     this.saves.refresh()

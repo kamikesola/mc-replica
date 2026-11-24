@@ -16,6 +16,7 @@ import { neighborUpdates } from './placement'
 import { Redstone } from './redstone'
 import type { WorldSave } from '../save/WorldSave'
 import WorkerPool from './worker/pool'
+import { ChunkGenerator } from './generator'
 import { fixedTime } from '../sky/formulas'
 
 export { BlockType } from './blocks'
@@ -44,6 +45,8 @@ export default class Terrain {
   scene: THREE.Scene
   camera: THREE.PerspectiveCamera
   pool = new WorkerPool()
+  /** 区块生成的调度器（v10.2）：原型 / 装饰 / 组装三种任务，每样只算一次 */
+  gen = new ChunkGenerator(this.pool)
   materials = new Materials()
   highlight: Highlight
 
@@ -122,6 +125,7 @@ export default class Terrain {
     this.fluids.clear()
     this.reload()
     this.info = await this.pool.broadcast('init', { seed, settings })
+    this.gen.reset(this.info.features)
     this.fixedTime = fixedTime(this.info.settings)
     return this.info
   }
@@ -152,6 +156,7 @@ export default class Terrain {
     for (const c of this.chunks.values()) c.dispose(this.scene)
     this.chunks.clear()
     this.loading.clear()
+    this.gen.reset(this.info?.features ?? true)
     this.generation++
   }
 
@@ -193,18 +198,25 @@ export default class Terrain {
       }
     }
 
-    // 每个 Worker 最多排 2 个任务。先算光照（便宜，算完就能显示），再生成新区块，都从离玩家最近的开始
-    const maxInFlight = this.pool.size * 2
-    if (this.pool.busy >= maxInFlight) return
-    const ready: [number, Chunk][] = []
-    for (const c of this.chunks.values()) {
-      if (c.light || c.lighting || !inView(c.cx, c.cz, 0)) continue
-      if (this.neighbors(c).every((n) => n)) ready.push([(c.cx - pcx) ** 2 + (c.cz - pcz) ** 2, c])
-    }
-    ready.sort((a, b) => a[0] - b[0])
-    for (const [, c] of ready.slice(0, maxInFlight - this.pool.busy)) this.relight(c)
-    if (this.pool.busy >= maxInFlight) return
+    // 区块生成的中间结果（原型、装饰）只留玩家附近的：最外圈区块的装饰还要用到再往外 2~3 个区块的前序装饰和它们的原型
+    this.gen.evict(pcx, pcz, this.distance + 5)
 
+    // 每个 Worker 最多排 2 个任务。先算光照（便宜，算完就能显示），再发生成区块的任务，都从离玩家最近的开始
+    const maxInFlight = this.pool.size * 2
+    if (this.pool.busy < maxInFlight) {
+      const ready: [number, Chunk][] = []
+      for (const c of this.chunks.values()) {
+        if (c.light || c.lighting || !inView(c.cx, c.cz, 0)) continue
+        if (this.neighbors(c).every((n) => n)) ready.push([(c.cx - pcx) ** 2 + (c.cz - pcz) ** 2, c])
+      }
+      ready.sort((a, b) => a[0] - b[0])
+      for (const [, c] of ready.slice(0, maxInFlight - this.pool.busy)) this.relight(c)
+    }
+    this.gen.pump(maxInFlight)
+
+    // 新区块：只是向调度器“预约”，它按依赖拆成任务排队。同时预约的不超过 Worker 数 × 3，离玩家近的先
+    const room = this.pool.size * 3 - this.loading.size
+    if (room <= 0) return
     const wanted: [number, number, number][] = []
     const r = this.distance + 1
     for (let dx = -r; dx <= r; dx++) {
@@ -215,7 +227,7 @@ export default class Terrain {
       }
     }
     wanted.sort((a, b) => a[0] - b[0])
-    for (const [, cx, cz] of wanted.slice(0, maxInFlight - this.pool.busy)) this.load(cx, cz)
+    for (const [d2, cx, cz] of wanted.slice(0, room)) this.load(cx, cz, d2)
   }
 
   /** 周围 8 个区块（先 z 后 x，不含自己）；没生成的是 undefined */
@@ -295,7 +307,7 @@ export default class Terrain {
   /**
    * 原版存档（v8）：区域文件里有、并且生成完了的区块从存档读；否则按种子自己生成（和原版的结果一样，接得上）
    */
-  private async loadVanilla(cx: number, cz: number): Promise<ChunkData> {
+  private async loadVanilla(cx: number, cz: number, priority: number): Promise<ChunkData> {
     const region = await this.world!.region(cx, cz)
     const raw = region && regionChunk(region, cx, cz)
     if (raw) {
@@ -310,21 +322,22 @@ export default class Terrain {
         return r.chunk
       }
     }
-    return this.pool.call('chunk', { cx, cz }, regionAffinity(cx, cz))
+    return this.gen.chunk(cx, cz, priority)
   }
 
-  private load(cx: number, cz: number): void {
+  private load(cx: number, cz: number, priority: number): void {
     const key = `${cx},${cz}`
     const generation = this.generation
     this.loading.add(key)
-    ;(this.world?.meta.source === 'vanilla' ? this.loadVanilla(cx, cz) : this.pool.call('chunk', { cx, cz }, regionAffinity(cx, cz)))
+    ;(this.world?.meta.source === 'vanilla' ? this.loadVanilla(cx, cz, priority) : this.gen.chunk(cx, cz, priority))
       .then((data) => {
         if (generation !== this.generation) return // 期间换了种子，结果作废
         this.loading.delete(key)
         this.onChunk(data)
       })
       .catch((e) => {
-        if (generation === this.generation) this.loading.delete(key)
+        if (generation !== this.generation) return // 换了种子：排着的任务作废，不是错误
+        this.loading.delete(key)
         console.error(`区块 ${key} 生成失败`, e)
       })
   }

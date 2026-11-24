@@ -29,9 +29,14 @@ terrain.init(seed, settings)                          // 让 Worker 换种子
  Terrain.update()                         主线程
    │ 视距内缺哪个区块？离玩家最近的先要
    ▼
- WorkerPool.call('chunk', {cx, cz})       terrain/worker/pool.ts（多个 Worker 并行）
+ ChunkGenerator.chunk(cx, cz)             terrain/generator.ts（v10.2，主线程调度）
+   │ 拆成三种 Worker 任务（terrain/worker/tasks.ts），依赖好了才排队，按离玩家的距离发给空闲的 Worker：
+   │   proto     周围 3×3 每个区块的原型（下面的 1 ~ 2.2）
+   │   decorate  周围 3×3 每个区块的装饰（2.3，还要先有同一装饰区域里排在前面的装饰）
+   │   assemble  原型 + 装饰 → 最终区块（2.3 叠加 ~ 3）
+   │ 原型和装饰算好后存在主线程，谁要用就发给谁：每样只算一次
    ▼
- generate.ts → generateChunk()            terrain/worker/surface.ts
+ generate.ts → protoTask / decorateTask / assembleTask   （内部仍是 ChunkSource + generateChunk）
    │ 1. NoiseChunk 算 final_density       ← terrain/worldgen（v0 的核心成果）
    │    > 0 石头（或矿脉，v5）；≤ 0 交给含水层：空气 / 水 / 岩浆 / 石头墙（v3）
    │ 2. 地表（v4）：原版 surface_rule（SurfaceSystem）按生物群系换成草 / 土 / 沙 / 陶瓦 / 雪……
@@ -174,10 +179,12 @@ v10.1：`recipes.ts`（`RecipeBook`：964 个工作台配方，`find(格子, 宽
 | | `textures/index.ts` | 纹理数组 |
 | | `fluid/FluidTicker.ts` | 流体流动：计划刻、getNewLiquid、spread、岩浆遇水 |
 | | `highlight/` | 选中方块的线框 |
-| | `worker/generate.ts` | Worker 入口：init / chunk / light / skyColors / f3 / slice |
+| | `generator.ts` | 区块生成的调度器（v10.2）：原型 / 装饰 / 组装三种任务，结果存在主线程，每样只算一次 |
+| | `worker/tasks.ts` | 三种任务的实现（v10.2）：把收到的原型、装饰放进 ChunkSource 的缓存，再调用原来的代码 |
+| | `worker/generate.ts` | Worker 入口：init / proto / decorate / assemble / chunk / light / skyColors / f3 / slice |
 | | `worker/surface.ts` | 区块原型（密度 → 方块 → 矿脉 → 地表）；装配（+ 地物 + 颜色 + section 压缩）；meshChunk：光照 + 网格（v6） |
 | | `worker/pipeline.ts` | 区块源（v5）：缓存原型和装饰结果；4×4 区块的装饰区域 |
-| | `worker/pool.ts` | Worker 池，请求交给最空闲的 Worker；区块请求按装饰区域固定分配（v5） |
+| | `worker/pool.ts` | Worker 池，请求交给最空闲的 Worker（v10.2 起区块生成不再按区域固定分配，原版存档的解码仍然是） |
 | | `worker/protocol.ts` | 主线程 ↔ Worker 的消息类型 |
 | | `worker/datapacks.ts` | 读取 `data/` 和 `datapacks/` |
 | | `worldgen/` | 世界生成引擎，见下 |

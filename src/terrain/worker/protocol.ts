@@ -1,6 +1,7 @@
 import type { BakedModels } from '../models/bakery'
 import type { PalettedData } from '../chunk/PalettedContainer'
 import type { SectionMeshes } from './surface'
+import type { Decoration, Proto } from './pipeline'
 
 /**
  * 主线程 ↔ 地形 Worker 的消息格式。
@@ -20,6 +21,8 @@ export interface WorldInfo {
   seaLevel: number
   /** 这个维度有没有天空光（v6：主世界有，下界、末地没有） */
   hasSkyLight: boolean
+  /** 这个维度有没有地物（v10.2：没有时区块生成不需要“装饰”这一步） */
+  features: boolean
   packs: { name: string; count: number }[]
 }
 
@@ -50,8 +53,14 @@ export interface Requests {
   ]
   /** 设置种子和 noise_settings，返回世界信息 */
   init: [{ seed: string; settings: string }, WorldInfo]
-  /** 生成一个区块的方块（v6 起不再顺便生成网格） */
+  /** 生成一个区块的方块（v6 起不再顺便生成网格）。v10.2 起游戏里改用下面三种任务，这个留给工具和对照用 */
   chunk: [{ cx: number; cz: number }, ChunkData]
+  /** 区块生成的三种任务（v10.2，见 worker/tasks.ts）：原型 */
+  proto: [{ cx: number; cz: number }, Proto]
+  /** 装饰：protos 是周围 3×3 的原型（先 z 后 x），priors 是 decorationDeps 里每个区块的装饰 */
+  decorate: [{ cx: number; cz: number; protos: Proto[]; priors: [number, number, Decoration][] }, Decoration]
+  /** 组装：周围 3×3 的原型和装饰 → 最终区块；没有地物时 decorations 为 null */
+  assemble: [{ cx: number; cz: number; protos: Proto[]; decorations: Decoration[] | null }, ChunkData]
   /**
    * 光照 + 网格（v6）：chunks 是周围 3×3 个区块的方块（先 z 后 x），返回中心区块 18×18 列的光照和每个 section 的网格。
    * greedy=false 时不合并面（对比用）

@@ -36,16 +36,22 @@ class Lru<V> {
     this.map.set(k, v)
     if (this.map.size > this.max) this.map.delete(this.map.keys().next().value!)
   }
+  has(k: string): boolean {
+    return this.map.has(k)
+  }
+  clear(): void {
+    this.map.clear()
+  }
 }
 
-interface Proto extends ProtoChunk {
+export interface Proto extends ProtoChunk {
   /** 原版 WORLD_SURFACE_WG / OCEAN_FLOOR_WG：地表之后就不再更新（放地物时也不变） */
   worldSurfaceWG: Int16Array
   oceanFloorWG: Int16Array
 }
 
 /** 一个区块的装饰结果：对周围 3×3 每个区块，改了哪些格子、改成什么 */
-type Decoration = { idx: Int32Array; ids: Uint16Array }[]
+export type Decoration = { idx: Int32Array; ids: Uint16Array }[]
 
 const NAMES = NAME_BY_STATE
 /** 按方块 ID 预先算好的性质（高度图用） */
@@ -59,6 +65,22 @@ const LEAF = Uint8Array.from(NAMES.map((n) => (isLeaves(n) ? 1 : 0)))
  * 不同区域之间互相看不到（只看原型），所以任何一个区块的结果都只取决于它所在的区域，和生成顺序无关。
  */
 export const REGION = 4
+
+/**
+ * 装饰 (cx, cz) 之前必须先装饰好的区块（同一个装饰区域里排在前面、2 个区块以内的），按 decoration() 里的顺序。
+ * v10.2：主线程的调度器（terrain/generator.ts）用它安排任务，和 decoration() 的循环必须一致（测试里核对）。
+ */
+export function decorationDeps(cx: number, cz: number): [number, number][] {
+  const out: [number, number][] = []
+  const rx = Math.floor(cx / REGION)
+  const rz = Math.floor(cz / REGION)
+  for (let ez = Math.max(rz * REGION, cz - 2); ez <= cz; ez++)
+    for (let ex = Math.max(rx * REGION, cx - 2); ex <= Math.min(rx * REGION + REGION - 1, cx + 2); ex++) {
+      if (ez === cz && ex >= cx) break
+      out.push([ex, ez])
+    }
+  return out
+}
 
 /** 周围 3×3 的偏移 */
 const NEIGHBORS: [number, number][] = [-1, 0, 1].flatMap((dz) => [-1, 0, 1].map((dx) => [dx, dz] as [number, number]))
@@ -92,6 +114,25 @@ export class ChunkSource {
       for (const b of biomes.possible) this.biomeFeatures.set(b, new Set(featuresOf(b).flat()))
       this.steps = buildFeaturesPerStep(biomes.possible, featuresOf)
     }
+  }
+
+  /**
+   * v10.2：把别处算好的原型、装饰直接放进缓存，之后 proto() / decoration() 就不会再算一遍。
+   * Worker 用它执行主线程安排的任务（见 worker/tasks.ts）：每个原型、每个装饰在整个游戏里只算一次。
+   */
+  putProto(cx: number, cz: number, p: Proto): void {
+    this.protos.set(`${cx},${cz}`, p)
+  }
+  putDecoration(cx: number, cz: number, d: Decoration): void {
+    this.decorations.set(`${cx},${cz}`, d)
+  }
+  hasDecoration(cx: number, cz: number): boolean {
+    return this.decorations.has(`${cx},${cz}`)
+  }
+  /** 清空缓存（Worker 每个任务前后各清一次，不在 Worker 里攒内存） */
+  clear(): void {
+    this.protos.clear()
+    this.decorations.clear()
   }
 
   get hasFeatures(): boolean {

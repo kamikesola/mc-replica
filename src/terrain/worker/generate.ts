@@ -11,7 +11,8 @@ import { type NoiseSettingsInfo, Worldgen } from '../worldgen'
 import { peaksAndValleys } from '../worldgen/density/peaksAndValleys'
 import { loadPacks } from './datapacks'
 import type { Method, Params, RequestMessage, ResponseMessage, Result } from './protocol'
-import { chunkFromBlocks, generateChunk, meshChunk } from './surface'
+import { chunkFromBlocks, chunkSource, generateChunk, meshChunk } from './surface'
+import { assembleTask, decorateTask, decorationBuffers, protoBuffers, protoTask } from './tasks'
 import { chunkNbt, decodeChunk } from '../../save/anvil'
 import { BlockMapper } from '../../save/blockMap'
 import { settleLeaves } from '../worldgen/feature/settle'
@@ -51,6 +52,7 @@ const handlers: { [M in Method]: Handler<M> } = {
         height: settings.height,
         seaLevel: settings.seaLevel,
         hasSkyLight: hasSkyLight(settingsId),
+        features: chunkSource(wg, settingsId, settings).hasFeatures,
         packs: wg.packs
       },
       []
@@ -76,6 +78,27 @@ const handlers: { [M in Method]: Handler<M> } = {
     for (const s of r.sections) if (s.data) buffers.push(s.data.buffer)
     const { meshes: _, ...data } = r
     return [data, buffers as Transferable[]]
+  },
+
+  // ---- v10.2：区块生成的三种任务（主线程 terrain/generator.ts 调度，每样只算一次）
+  proto(wg, p) {
+    if (!settings) throw new Error('还没有 init')
+    const r = protoTask(wg, settingsId, settings, p.cx, p.cz)
+    return [r, protoBuffers(r) as Transferable[]]
+  },
+
+  decorate(wg, p) {
+    if (!settings) throw new Error('还没有 init')
+    const r = decorateTask(wg, settingsId, settings, p.cx, p.cz, p.protos, p.priors)
+    return [r, decorationBuffers(r) as Transferable[]]
+  },
+
+  assemble(wg, p) {
+    if (!settings) throw new Error('还没有 init')
+    const r = assembleTask(wg, settingsId, settings, p.cx, p.cz, p.protos, p.decorations)
+    const buffers: ArrayBufferLike[] = [r.fluidUpdates.buffer, r.tints.buffer, r.blocks.buffer]
+    for (const s of r.sections) if (s.data) buffers.push(s.data.buffer)
+    return [r, buffers as Transferable[]]
   },
 
   light(_wg, p) {

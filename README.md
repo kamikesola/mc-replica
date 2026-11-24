@@ -10,6 +10,7 @@
 
 | 版本 | 文章 | 在线 demo |
 | --- | --- | --- |
+| 回顾 | [v0–v10 回顾：从噪声到生存模式](docs/articles/v10-回顾：从噪声到生存模式.md) | |
 | v10.2.1 | [生成提速](docs/articles/v10.2.1-生成提速.md) | [v10.2.1](https://kamikesola.github.io/mc-replica/v10.2.1/) |
 | v10.2 | [整理与区块生成调度](docs/articles/v10.2-整理与区块生成调度.md) | [v10.2](https://kamikesola.github.io/mc-replica/v10.2/) |
 | v10.1 | [合成和工具](docs/articles/v10.1-合成和工具.md) | [v10.1](https://kamikesola.github.io/mc-replica/v10.1/) |

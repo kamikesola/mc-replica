@@ -2,6 +2,23 @@
 
 每个版本对应一个 git tag 和一篇文章。数字来自 `tools/` 下的脚本或 `tests/` 里的测试，可以自己复现。
 
+## v10.2.1 · 生成提速
+
+文章：[docs/articles/v10.2.1-生成提速.md](docs/articles/v10.2.1-生成提速.md) · 日志：[docs/notes/v10.2.1-notes.md](docs/notes/v10.2.1-notes.md)
+
+v10.2 让每个原型、装饰只算一次，这一版让单个原型、装饰本身变快。生成结果逐格不变。
+
+- 含水层（`worldgen/aquifer/Aquifer.ts`）
+  - 格子的含水层状态（水位、流体）跨区块共享：按（格子坐标，中心点在不在当前区块的 flat_cache 范围里）缓存在 Worldgen 上。
+    以前每个区块自己从头算，相邻区块重叠的格子算好几遍；算一个格子要求 erosion、depth、floodedness 等好几个密度函数
+  - 周围 12 个格子的含水层完全一样、又在水位以上时直接返回空气（天空、水位以上的洞穴）：这时原版的计算结果也一定是空气
+  - 周围 12 个格子的下标按组记住，相邻方块不再重复查
+- 查群系（`worldgen/biome/Climate.ts`）：`ParameterList.find` 按距离下界从近到远访问子盒子，栈复用不分配
+- 数字（Node，种子 42，原版主世界，81 个区块，`npx tsx tools/bench-gen.ts 4 42 minecraft:overworld --tasks`）：
+  总时间 45.4 → 35.3 秒；原型 90.9 → 65.7 ms，装饰 75.4 → 63.9 ms。和 v10.1（3 个 Worker，79.6 秒）比快 2.25 倍
+- 测试 `tests/fast-paths.test.ts`：含水层提速开和不开，相邻 3×3 个区块逐格相同；`find` 和逐项比较在 2 万个点上结果相同
+- `Worldgen.fastAquifer`：关掉含水层的两项提速（测试对照用）
+
 ## v10.2 · 整理与区块生成调度
 
 文章：[docs/articles/v10.2-整理与区块生成调度.md](docs/articles/v10.2-整理与区块生成调度.md) · 日志：[docs/notes/v10.2-notes.md](docs/notes/v10.2-notes.md)

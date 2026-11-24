@@ -79,6 +79,14 @@ export interface AquiferNoises {
   depth: (ctx: FunctionContext) => number
   /** 预估地表高度：给定 (x, z) 返回高度，调用方负责缓存（原版 NoiseChunk.preliminarySurfaceLevel） */
   preliminarySurfaceLevel: (x: number, z: number) => number
+  /**
+   * 跨区块共享的含水层状态缓存（v10.3，可选）。一个格子的水位只取决于它的位置，和它的中心点在不在
+   * “当前区块的 flat_cache 范围”里（erosion、depth 在范围里按 quart 取值，范围外按精确位置取值，见 chunkLocal）。
+   * 所以按（格子坐标，在不在范围里）缓存，结果和每个区块自己算完全一样。qx0 / qz0 是当前区块的起点 quart 坐标。
+   */
+  shared?: { cache: Map<number, FluidStatus>; qx0: number; qz0: number }
+  /** 关掉“周围格子完全一样时直接返回空气”的捷径（v10.3，测试用来对照；默认开） */
+  noShortcut?: boolean
 }
 
 // 原版常数
@@ -162,6 +170,14 @@ export class NoiseBasedAquifer implements Aquifer {
     this.statuses = new Array(n)
   }
 
+  /** computeSubstance 上一次用的 12 个格子（nearL/M/N 是它们的起点格子坐标） */
+  private readonly near = new Int32Array(12)
+  private nearL = NaN
+  private nearM = NaN
+  private nearN = NaN
+  /** 这组格子完全一样时，y ≥ 它就一定是空气（水位；流体是空气时 -∞）；不一样时 +∞（不走捷径） */
+  private nearAirFrom = Infinity
+
   private index(gx: number, gy: number, gz: number): number {
     const x = gx - this.minGX
     const y = gy - this.minGY
@@ -207,40 +223,62 @@ export class NoiseBasedAquifer implements Aquifer {
     let t = 0
     let u = 0
     let v = 0
-    for (let w = 0; w <= 1; w++) {
-      for (let x = -1; x <= 1; x++) {
-        for (let y = 0; y <= 1; y++) {
-          const c = this.location(l + w, m + x, n + y)
-          const dx = this.locX[c] - i
-          const dy = this.locY[c] - j
-          const dz = this.locZ[c] - k
-          const d2 = dx * dx + dy * dy + dz * dz
-          if (o >= d2) {
-            v = u
-            u = t
-            t = s
-            s = c
-            r = q
-            q = p
-            p = o
-            o = d2
-          } else if (p >= d2) {
-            v = u
-            u = t
-            t = c
-            r = q
-            q = p
-            p = d2
-          } else if (q >= d2) {
-            v = u
-            u = c
-            r = q
-            q = d2
-          } else if (r >= d2) {
-            v = c
-            r = d2
-          }
-        }
+    // 周围 12 个格子的下标：相邻的方块几乎总是同一组格子，记住上一组直接用（v10.3，顺序和原版的三层循环一样）
+    if (l !== this.nearL || m !== this.nearM || n !== this.nearN) {
+      let a = 0
+      for (let w = 0; w <= 1; w++) for (let x = -1; x <= 1; x++) for (let y = 0; y <= 1; y++) this.near[a++] = this.location(l + w, m + x, n + y)
+      this.nearL = l
+      this.nearM = m
+      this.nearN = n
+      // 12 个格子的含水层是不是完全一样（水位、流体都相同）
+      const first = this.status(this.near[0])
+      let same = true
+      for (let b = 1; b < 12 && same; b++) {
+        const st = this.status(this.near[b])
+        same = st.fluidLevel === first.fluidLevel && st.fluidType === first.fluidType
+      }
+      this.nearAirFrom = !same || this.noises.noShortcut ? Infinity : first.fluidType === Fluid.air ? -Infinity : first.fluidLevel
+    }
+    // 捷径（v10.3）：12 个格子的含水层完全一样、这里又在水位以上（是空气）时，下面不管哪几个格子最近，
+    // 结果都是空气：两两之间“压力”为 0（水位差 0），不会变成石头墙；是空气也不会安排流体更新。天空和水位以上的洞穴都走这里
+    if (j >= this.nearAirFrom) {
+      this.shouldScheduleFluidUpdate = false
+      return Fluid.air
+    }
+    const near = this.near
+    const locX = this.locX
+    const locY = this.locY
+    const locZ = this.locZ
+    for (let a = 0; a < 12; a++) {
+      const c = near[a]
+      const dx = locX[c] - i
+      const dy = locY[c] - j
+      const dz = locZ[c] - k
+      const d2 = dx * dx + dy * dy + dz * dz
+      if (o >= d2) {
+        v = u
+        u = t
+        t = s
+        s = c
+        r = q
+        q = p
+        p = o
+        o = d2
+      } else if (p >= d2) {
+        v = u
+        u = t
+        t = c
+        r = q
+        q = p
+        p = d2
+      } else if (q >= d2) {
+        v = u
+        u = c
+        r = q
+        q = d2
+      } else if (r >= d2) {
+        v = c
+        r = d2
       }
     }
 
@@ -332,7 +370,23 @@ export class NoiseBasedAquifer implements Aquifer {
   private status(c: number): FluidStatus {
     let st = this.statuses[c]
     if (!st) {
-      st = this.computeFluid(this.locX[c], this.locY[c], this.locZ[c])
+      const shared = this.noises.shared
+      if (shared) {
+        // 格子坐标从下标反推；中心点在不在当前区块的 flat_cache 范围（quart 0..4）里
+        const gx = (c % this.sizeGX) + this.minGX
+        const gz = (Math.floor(c / this.sizeGX) % this.sizeGZ) + this.minGZ
+        const gy = Math.floor(c / (this.sizeGX * this.sizeGZ)) + this.minGY
+        const qx = Math.floor(this.locX[c] / 4) - shared.qx0
+        const qz = Math.floor(this.locZ[c] / 4) - shared.qz0
+        const inside = qx >= 0 && qz >= 0 && qx <= 4 && qz <= 4 ? 1 : 0
+        const key = (((gx + 0x200000) * 0x400000 + (gz + 0x200000)) * 128 + (gy + 64)) * 2 + inside
+        st = shared.cache.get(key)
+        if (!st) {
+          st = this.computeFluid(this.locX[c], this.locY[c], this.locZ[c])
+          if (shared.cache.size > 200_000) shared.cache.clear()
+          shared.cache.set(key, st)
+        }
+      } else st = this.computeFluid(this.locX[c], this.locY[c], this.locZ[c])
       this.statuses[c] = st
     }
     return st

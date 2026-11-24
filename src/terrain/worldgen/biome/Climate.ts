@@ -169,23 +169,40 @@ export class ParameterList<T> {
     return s
   }
 
+  /** 盒子到目标的距离下界 */
+  private lowerBound(node: BoxNode): number {
+    const target = this.target
+    let lb = 0
+    for (let d = 0; d < DIMS; d++) {
+      const v = target[d]
+      const e = v < node.min[d] ? node.min[d] - v : v > node.max[d] ? v - node.max[d] : 0
+      lb += e * e
+    }
+    return lb
+  }
+  /** find 用的栈（复用，不每次分配）：节点和它的距离下界 */
+  private readonly stackNodes: BoxNode[] = []
+  private readonly stackLbs = new Float64Array(512)
+
+  /**
+   * 找最近的一项：距离最小，一样近时取表里靠前的（和逐项比较、原版的结果一样）。
+   * v10.3：子盒子按距离下界从近到远访问，先找到近的，后面能剪掉更多；结果只取决于“最小距离 + 最小序号”，和访问顺序无关
+   */
   find(t: TargetPoint): T {
     const target = this.target
     for (let d = 0; d < 6; d++) target[d] = t[d]
     target[6] = 0
     let bestIdx = this.last
     let best = this.dist(bestIdx)
-    const stack: BoxNode[] = [this.root]
-    while (stack.length) {
-      const node = stack.pop()!
-      // 盒子到目标的距离下界
-      let lb = 0
-      for (let d = 0; d < DIMS; d++) {
-        const v = target[d]
-        const e = v < node.min[d] ? node.min[d] - v : v > node.max[d] ? v - node.max[d] : 0
-        lb += e * e
-      }
-      if (lb > best) continue
+    const nodes = this.stackNodes
+    const lbs = this.stackLbs
+    let sp = 0
+    nodes[sp] = this.root
+    lbs[sp++] = this.lowerBound(this.root)
+    while (sp > 0) {
+      sp--
+      const node = nodes[sp]
+      if (lbs[sp] > best) continue
       if (node.items) {
         for (const i of node.items) {
           const s2 = this.dist(i)
@@ -194,7 +211,22 @@ export class ParameterList<T> {
             bestIdx = i
           }
         }
-      } else for (let k = node.children!.length - 1; k >= 0; k--) stack.push(node.children![k])
+        continue
+      }
+      // 子盒子入栈，按下界从大到小排好（插入排序），栈顶是最近的
+      const base = sp
+      for (const c of node.children!) {
+        const lb = this.lowerBound(c)
+        if (lb > best) continue
+        let k = sp++
+        while (k > base && lbs[k - 1] < lb) {
+          nodes[k] = nodes[k - 1]
+          lbs[k] = lbs[k - 1]
+          k--
+        }
+        nodes[k] = c
+        lbs[k] = lb
+      }
     }
     this.last = bestIdx
     return this.values[bestIdx][1]

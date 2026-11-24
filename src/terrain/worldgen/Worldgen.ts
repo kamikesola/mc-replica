@@ -18,6 +18,7 @@ import {
   disabledAquifer,
   Fluid,
   NoiseBasedAquifer,
+  type FluidStatus,
   preliminarySurfaceSampler
 } from './aquifer/Aquifer'
 import type { PositionalRandomFactory } from './random/RandomSource'
@@ -60,6 +61,13 @@ export class Worldgen {
   private cachedSamplers = new Map<string, DensityFunction>()
   /** 预估地表高度的缓存（每个 noise_settings 一张），换种子时清空 */
   private surfaceCaches = new Map<string, Map<number, number>>()
+  /**
+   * 含水层的两项提速（v10.3）：跨区块共享格子状态、周围一样时直接返回空气。结果和不开完全一样，
+   * 测试里关掉它们做对照（tests/aquifer-fast.test.ts）
+   */
+  fastAquifer = true
+  /** 含水层状态的跨区块缓存（v10.3），按 noise_settings 分开；见 AquiferNoises.shared */
+  private aquiferCaches = new Map<string, Map<number, FluidStatus>>()
   private aquiferRandom: PositionalRandomFactory | null = null
   private oreRandom: PositionalRandomFactory | null = null
   private biomeSources = new Map<string, BiomeSource>()
@@ -120,6 +128,7 @@ export class Worldgen {
     this.wiredRouter.clear()
     this.cachedSamplers.clear()
     this.surfaceCaches.clear()
+    this.aquiferCaches.clear()
     this.aquiferRandom = null
     this.oreRandom = null
     this.biomeSources.clear()
@@ -129,6 +138,12 @@ export class Worldgen {
 
   get seed(): bigint {
     return this.randomState.seed
+  }
+
+  private aquiferCache(id: string): Map<number, FluidStatus> {
+    let c = this.aquiferCaches.get(id)
+    if (!c) this.aquiferCaches.set(id, (c = new Map()))
+    return c
   }
 
   /** 预估地表高度（原版 NoiseChunk.preliminarySurfaceLevel），按 noise_settings 缓存；含水层和地表规则都要用 */
@@ -271,7 +286,9 @@ export class Worldgen {
         lava: sample('lava'),
         erosion: (c) => erosion.compute(c),
         depth: (c) => depth.compute(c),
-        preliminarySurfaceLevel: preliminarySurfaceSampler(sample('initial_density_without_jaggedness'), s.minY, s.height, s.cellHeight, cache)
+        preliminarySurfaceLevel: preliminarySurfaceSampler(sample('initial_density_without_jaggedness'), s.minY, s.height, s.cellHeight, cache),
+        shared: this.fastAquifer ? { cache: this.aquiferCache(id), qx0: chunkX * 4, qz0: chunkZ * 4 } : undefined,
+        noShortcut: !this.fastAquifer
       },
       this.aquiferRandom,
       picker,

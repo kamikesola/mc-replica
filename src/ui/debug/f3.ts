@@ -114,7 +114,7 @@ export default class F3 {
     const r = this.core.renderer.info.render
     const mb = (b: number) => (b / 1048576).toFixed(1) + ' MB'
     const lines = [
-      `mc-replica v10.2 (${fps} fps, 20 TPS)`,
+      `mc-replica v10.2.1 (${fps} fps, 20 TPS)`,
       `种子: ${info?.seed ?? '…'}    noise_settings: ${info?.settings ?? '…'}`,
       `区块: ${st.loaded} 已加载（${st.lit} 已点亮）, ${st.loading} 生成中, 上一个用时 ${this.terrain.lastChunkMs.toFixed(0)} ms, 光照+网格 ${this.terrain.lastLightMs.toFixed(0)} ms, 挖/放重建 ${this.terrain.lastRemeshMs.toFixed(1)} ms`,
       `生成任务: 原型 ${this.terrain.gen.counts.proto} · 装饰 ${this.terrain.gen.counts.decorate} · 组装 ${this.terrain.gen.counts.assemble}，排队 ${this.terrain.gen.queued}，缓存 ${(this.terrain.gen.bytes / 1048576).toFixed(0)} MB`,
